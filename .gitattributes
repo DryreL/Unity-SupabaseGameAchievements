@@ -18,6 +18,7 @@
 *.pub text eol=lf
 *.txt text eol=lf
 *.cs text eol=lf
+*.meta text eol=lf
 
 # Windows batch files need CRLF
 *.bat text eol=crlf
