@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using DryreLHub.SupabaseGameAchievements.Unity;
 using UnityEngine;
 
@@ -77,6 +77,21 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
         {
             if (Instance != null) return Instance;
             return new GameObject("PatreonAchievementsBootstrap").AddComponent<PatreonAchievementsBootstrap>();
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void AutoInitialize()
+        {
+            if (Instance != null) return;
+            var prefab = Resources.Load<PatreonAchievementsBootstrap>(""PatreonAchievementsBootstrap"");
+            if (prefab != null)
+            {
+                Instantiate(prefab).name = ""PatreonAchievementsBootstrap"";
+            }
+            else
+            {
+                EnsureCreated();
+            }
         }
 
         private void Awake()
@@ -212,3 +227,4 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
         }
     }
 }
+
