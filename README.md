@@ -2,7 +2,7 @@
 
 Offline-first achievements for games: instant local unlocks, crash-safe saves, batched idempotent
 server sync, an optional unlock overlay, and optional Unity Localization. The design, security
-model and failure handling are documented in [`docs/ACHIEVEMENTS.md`](../../docs/ACHIEVEMENTS.md).
+model and failure handling are documented in [`docs/ACHIEVEMENTS.md`](docs/ACHIEVEMENTS.md).
 
 ```csharp
 AchievementManager.TryUnlock("first_blood");   // instant, offline-safe, never awaits the network
@@ -231,4 +231,5 @@ the thread pool (inline on WebGL). Nothing blocks a frame on I/O except a rare a
 
 Window → General → Test Runner. The package is test-enabled via `"testables": ["com.DryreLHub.SupabaseGameAchievements"]`
 in the project manifest. EditMode runs the core suite, PlayMode the overlay suite.
+
 
