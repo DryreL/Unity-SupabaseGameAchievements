@@ -153,6 +153,15 @@ Put sprites at `Assets/Resources/<prefix><icon>`, e.g. with prefix `Achievements
 Unlike localization tables, this path matters: `Resources.Load` resolves it literally. Icons are always
 loaded from packaged Resources, never from Remote Config or the network, even when 3b is used.
 
+**Missing icon (e.g. an old build + an achievement added later via Remote Config).** An already-shipped
+build has no way to have packaged art for an achievement that did not exist yet when it was built. When
+`ResourcesAchievementIconProvider` cannot load an icon — missing file, bad path, anything — it never
+leaves a blank gap; it shows a fallback instead, in this order: your own fallback sprite if you set
+`UnityAchievementManager.Config.FallbackIcon` (or passed one to the provider's constructor), otherwise
+`DefaultAchievementIcon.GetOrCreate()` — a plain generated placeholder badge shipped with the package so
+there is always a sane default with zero setup. Give it your own fallback sprite once you have real art
+for it; the generated one is intentionally plain.
+
 ### 4b. Add translations (optional)
 
 Create a **String Table Collection** named `ST_Achievements` (Window → Asset Management →
@@ -241,12 +250,42 @@ String parameter, returning Bool).
 
 ---
 
-## Customizing the overlay
+## The notification overlay
 
-Add `UnityAchievementOverlay` to the manager object yourself (or let the manager add it) and set a
-prefab whose root has a `Canvas` and a component deriving from `AchievementToastView`. Override
-`SetContent`, `SetText`, `SetVisibility` for TextMeshPro or custom animation. Timings, margin, header
-text, sort order and sound are serialized fields.
+Zero setup needed: `UnityAchievementManager` adds `UnityAchievementOverlay` itself and it builds its
+own bottom-right panel in code the first time a toast is shown. Out of the box it already: slides
+straight up from below the bottom edge of the screen, holds for ~2.25 s, slides straight back down,
+never overlaps a second toast (they queue), plays the unlock sound once per toast, and never blocks
+gameplay input (no `Graphic Raycaster`). Timings, margin, header text, sort order and the sound clip
+are all serialized fields on `UnityAchievementOverlay` if you want to tweak them without touching art.
+
+### Building your own visual (optional)
+
+Only do this if you want different art/fonts (e.g. TextMeshPro) or a different animation. The overlay
+never cares how the toast looks — it only calls `SetContent`/`SetText`/`SetVisibility` on whatever
+`AchievementToastView` you give it.
+
+1. In a scene, create **UI → Canvas** named e.g. `AchievementToastPrefab`. Set **Render Mode** to
+   *Screen Space - Overlay*. Do **not** add a `Graphic Raycaster` — the toast must never eat clicks.
+2. Add a child **Panel** (this is the part `SetVisibility` moves): anchor **bottom-right**
+   (`anchorMin`/`anchorMax` = `(1, 0)`, pivot = `(1, 0)`), give it a fixed size (e.g. 440×104), and add
+   a `Canvas Group` component to it (this is what `SetVisibility` fades).
+3. Add children for **Icon** (`Image`), **Title** and **Description** (`Text` or `TextMeshProUGUI`) —
+   any layout you like.
+4. Add a script on the Canvas root that derives from `AchievementToastView`. Use the built-in one
+   as-is if your fields are plain `Text`/`Image`, or copy it and swap `Text` for `TextMeshProUGUI` and
+   override `SetContent`/`SetText`. **Do not override `SetVisibility`/`SetMargin`** unless you want a
+   different animation — the base implementation already does the slide-up/slide-down described above,
+   driven purely by your panel's own `RectTransform` height, so it adapts to whatever size you picked
+   in step 2 automatically.
+5. Assign the child references in the Inspector (Panel, Canvas Group, Icon, Title, Description),
+   drag the whole Canvas into the project's `Assets` as a prefab, then assign that prefab to
+   `UnityAchievementOverlay`'s **Toast Prefab** field.
+
+If you want a *different* animation (e.g. fade only, or scale in), override `SetVisibility(float)`
+yourself — `visibility` is driven every frame from 0 (hidden) to 1 (fully shown) and back, on
+`Time.unscaledDeltaTime` (works while the game is paused). Sound and queuing stay exactly the same
+either way; those live on `UnityAchievementOverlay`, not on the view.
 
 ## Threading
 

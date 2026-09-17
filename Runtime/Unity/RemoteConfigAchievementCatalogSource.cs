@@ -193,7 +193,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                     var appConfig = instance != null
                         ? ugsType.GetProperty("appConfig", BindingFlags.Public | BindingFlags.Instance)?.GetValue(instance)
                         : null;
-                    var value = GetString(appConfig, key);
+                    var value = GetValue(appConfig, key);
                     if (!string.IsNullOrEmpty(value)) return value;
                 }
 
@@ -201,7 +201,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 if (legacyType != null)
                 {
                     var appConfig = legacyType.GetProperty("appConfig", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-                    var value = GetString(appConfig, key);
+                    var value = GetValue(appConfig, key);
                     if (!string.IsNullOrEmpty(value)) return value;
                 }
             }
@@ -212,10 +212,23 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             return null;
         }
 
-        private static string GetString(object appConfig, string key)
+        /// <summary>
+        /// Reads <paramref name="key"/> as whichever value type it was configured with in the Remote Config
+        /// dashboard. A key created with type "json" is read with <c>GetJson(key, "{}")</c> (the manifest
+        /// pasted in as-is, unescaped); a key created with type "string" is read with <c>GetString(key, "")</c>
+        /// (the manifest pasted in as one escaped string value). Both are tried, in that order, since the
+        /// reflection here cannot see which type was actually chosen for the key.
+        /// </summary>
+        private static string GetValue(object appConfig, string key)
         {
             if (appConfig == null) return null;
-            var getString = appConfig.GetType().GetMethod("GetString", new[] { typeof(string), typeof(string) });
+            var type = appConfig.GetType();
+
+            var getJson = type.GetMethod("GetJson", new[] { typeof(string), typeof(string) });
+            var json = getJson?.Invoke(appConfig, new object[] { key, "{}" }) as string;
+            if (!string.IsNullOrEmpty(json) && json != "{}") return json;
+
+            var getString = type.GetMethod("GetString", new[] { typeof(string), typeof(string) });
             return getString?.Invoke(appConfig, new object[] { key, string.Empty }) as string;
         }
     }

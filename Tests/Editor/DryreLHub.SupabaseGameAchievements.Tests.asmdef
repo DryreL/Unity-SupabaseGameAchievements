@@ -4,6 +4,7 @@
     "references": [
         "DryreLHub.SupabaseGameAchievements",
         "DryreLHub.SupabaseGameAchievements.Unity",
+        "DryreLHub.SupabaseGameAchievements.Editor",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

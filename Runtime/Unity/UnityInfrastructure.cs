@@ -221,13 +221,21 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         Sprite GetIcon(AchievementDefinition definition);
     }
 
-    /// <summary>Loads <c>Resources/&lt;prefix&gt;&lt;IconPath&gt;</c> once per achievement and caches the result (including misses).</summary>
+    /// <summary>
+    /// Loads <c>Resources/&lt;prefix&gt;&lt;IconPath&gt;</c> once per achievement and caches the result
+    /// (including failures). Never returns null: a missing or unloadable icon falls back to
+    /// <paramref name="fallback"/> passed to the constructor, or <see cref="DefaultAchievementIcon"/> if
+    /// none was given. This matters for an old, already-shipped build showing an achievement it did not
+    /// ship art for (e.g. one added later purely through a Remote Config catalog update) — it still shows a
+    /// clearly-intentional placeholder rather than a blank gap.
+    /// </summary>
     public sealed class ResourcesAchievementIconProvider : IAchievementIconProvider
     {
         private readonly string _prefix;
         private readonly Sprite _fallback;
         private readonly Dictionary<long, Sprite> _cache = new Dictionary<long, Sprite>();
 
+        /// <param name="fallback">Used for any icon that cannot be loaded. Null uses <see cref="DefaultAchievementIcon"/>.</param>
         public ResourcesAchievementIconProvider(string pathPrefix = "", Sprite fallback = null)
         {
             _prefix = pathPrefix ?? string.Empty;
@@ -236,20 +244,35 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
         public Sprite GetIcon(AchievementDefinition definition)
         {
-            if (definition == null) return _fallback;
+            if (definition == null) return Fallback();
             if (_cache.TryGetValue(definition.Id, out var cached)) return cached;
 
             Sprite sprite = null;
-            if (definition.IconPath != null)
+            try
             {
-                string path = _prefix + System.IO.Path.ChangeExtension(definition.IconPath, null);
-                sprite = Resources.Load<Sprite>(path);
-                if (sprite == null) Debug.LogWarning("[Achievements] Missing icon '" + path + "' for achievement '" + definition.Key + "'.");
+                if (definition.IconPath != null)
+                {
+                    string path = _prefix + System.IO.Path.ChangeExtension(definition.IconPath, null);
+                    sprite = Resources.Load<Sprite>(path);
+                    if (sprite == null)
+                        Debug.LogWarning("[Achievements] Missing icon '" + path + "' for achievement '" + definition.Key +
+                            "' (showing the fallback icon instead). Expected if this achievement was added after this " +
+                            "build shipped, e.g. through a Remote Config catalog update, without matching packaged art.");
+                }
             }
-            sprite = sprite != null ? sprite : _fallback;
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[Achievements] Failed to load the icon for achievement '" + definition.Key + "': " + e.Message +
+                    " (showing the fallback icon instead).");
+                sprite = null;
+            }
+
+            sprite = sprite != null ? sprite : Fallback();
             _cache[definition.Id] = sprite;
             return sprite;
         }
+
+        private Sprite Fallback() => _fallback != null ? _fallback : DefaultAchievementIcon.GetOrCreate();
     }
 }
 

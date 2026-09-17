@@ -136,7 +136,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator Missing_icon_still_shows_the_toast_without_an_icon()
+        public IEnumerator Missing_icon_falls_back_to_the_default_placeholder_icon()
         {
             Build();
             LogAssert.ignoreFailingMessages = true;
@@ -144,8 +144,46 @@ namespace DryreLHub.SupabaseGameAchievements.Unity.Tests
             _system.TryUnlock("a1");
 
             yield return WaitUntil(() => _overlay.ShownCount == 1);
-            Assert.IsFalse(_overlay.View.HasIcon);
+            Assert.IsTrue(_overlay.View.HasIcon, "a placeholder is shown rather than leaving a blank gap");
+            Assert.AreSame(DefaultAchievementIcon.GetOrCreate(), _overlay.View.Icon);
             Assert.AreEqual("Title 1", _overlay.View.TitleText);
+            LogAssert.ignoreFailingMessages = false;
+        }
+
+        [UnityTest]
+        public IEnumerator Missing_icon_uses_a_configured_fallback_over_the_default_placeholder()
+        {
+            Build();
+            var customFallback = Sprite.Create(new Texture2D(1, 1), new Rect(0, 0, 1, 1), Vector2.one * 0.5f);
+            LogAssert.ignoreFailingMessages = true;
+            _overlay.Bind(_system.Notifications, new ResourcesAchievementIconProvider(fallback: customFallback));
+            _system.TryUnlock("a1");
+
+            yield return WaitUntil(() => _overlay.ShownCount == 1);
+            Assert.AreSame(customFallback, _overlay.View.Icon);
+            LogAssert.ignoreFailingMessages = false;
+        }
+
+        [UnityTest]
+        public IEnumerator An_achievement_added_after_this_build_shipped_still_shows_a_placeholder_icon()
+        {
+            // Simulates an old build receiving a newer catalog (e.g. via Remote Config) that references an
+            // achievement whose icon was never packaged with this build.
+            Build();
+            var newerDefinitions = new List<AchievementDefinition>
+            {
+                new AchievementDefinition(500, "added_later", 0, "Added Later", "Shipped after this build.", iconPath: "achievements/added_later"),
+            };
+            var newerCatalog = new AchievementCatalog(1, "overlay-test", 2, newerDefinitions);
+            _overlay.Bind(_system.Notifications, new ResourcesAchievementIconProvider());
+
+            LogAssert.ignoreFailingMessages = true;
+            var notification = _system.Notifications.OnUnlocked(new AchievementUnlockedEvent(newerCatalog.Achievements[0], DateTime.UtcNow));
+            Assert.IsNotNull(notification);
+
+            yield return WaitUntil(() => _overlay.ShownCount == 1);
+            Assert.IsTrue(_overlay.View.HasIcon);
+            Assert.AreSame(DefaultAchievementIcon.GetOrCreate(), _overlay.View.Icon);
             LogAssert.ignoreFailingMessages = false;
         }
 

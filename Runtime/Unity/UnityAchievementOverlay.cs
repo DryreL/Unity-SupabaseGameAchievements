@@ -36,17 +36,28 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
         public bool HasIcon => _icon != null && _icon.enabled;
 
+        public Sprite Icon => _icon != null ? _icon.sprite : null;
+
         public virtual void SetText(string title, string description)
         {
             if (_title != null) _title.text = title;
             if (_description != null) _description.text = description;
         }
 
-        /// <param name="visibility">0 = hidden (off to the right), 1 = fully shown.</param>
+        /// <summary>
+        /// 0 = hidden, tucked below the bottom edge of the screen; 1 = fully shown at its resting position
+        /// (see <see cref="SetMargin"/>). Slides straight up on enter and straight back down on exit, sized
+        /// off the panel's own <see cref="RectTransform.rect"/> height so this works for any prefab, not just
+        /// the built-in default.
+        /// </summary>
         public virtual void SetVisibility(float visibility)
         {
             if (_canvasGroup != null) _canvasGroup.alpha = visibility;
-            if (_panel != null) _panel.anchoredPosition = _restingPosition + new Vector2((1f - visibility) * 48f, 0f);
+            if (_panel != null)
+            {
+                float hiddenDrop = _panel.rect.height + 24f; // fully below the screen edge, plus a small buffer
+                _panel.anchoredPosition = _restingPosition + new Vector2(0f, -(1f - visibility) * hiddenDrop);
+            }
         }
 
         public virtual void SetMargin(Vector2 margin)
