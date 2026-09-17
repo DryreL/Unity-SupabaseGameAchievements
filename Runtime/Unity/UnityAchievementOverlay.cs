@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -150,26 +153,33 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             var font = customFont != null ? customFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             if (font != null)
             {
-                // Fallback font names for CJK (Chinese, Japanese, Korean) and Cyrillic (Russian)
+                // Broad system font fallback supporting Cyrillic, Turkish, Latin, and CJK
                 font.fontNames = new string[]
                 {
                     font.name,
-                    "Arial",
-                    "Segoe UI",
+                    "Segoe UI",              // Windows default (Cyrillic, Turkish, Latin)
+                    "Arial",                 // Universal cross-platform
+                    "Tahoma",                // Broad Unicode coverage
+                    "Verdana",
                     "Microsoft YaHei",       // Windows Chinese
                     "SimSun",                // Windows Chinese fallback
                     "PingFang SC",           // macOS Chinese
                     "Heiti SC",              // macOS Chinese
+                    "Helvetica Neue",        // macOS Latin
                     "Noto Sans CJK SC",      // Android / Linux Chinese
+                    "Noto Sans",             // Android / Linux Latin/Cyrillic
+                    "Roboto",                // Android default
                     "Droid Sans Fallback"    // Android fallback
                 };
             }
 
-            view._panel = CreateRect("Panel", root.transform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(1, 0), new Vector2(440, 104));
+            // Panel: 440 x 108, anchored to bottom-right
+            view._panel = CreateRect("Panel", root.transform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(1, 0), new Vector2(440, 108));
             var background = view._panel.gameObject.AddComponent<Image>();
             background.sprite = RoundedBoxSprite.GetOrCreate(cornerRadius);
             background.type = Image.Type.Sliced;
-            background.color = new Color(0f, 0f, 0f, 0.95f);
+            // Background color matches target (#14121D, RGB: 20, 18, 29) with 100% opacity
+            background.color = new Color32(20, 18, 29, 255);
             background.raycastTarget = false;
             view._canvasGroup = view._panel.gameObject.AddComponent<CanvasGroup>();
             view._canvasGroup.interactable = false;
@@ -182,18 +192,21 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             var accentImage = accent.gameObject.AddComponent<Image>();
             accentImage.color = effectiveAccentColor;
             accentImage.raycastTarget = false;
-            accent.gameObject.SetActive(false); // Collapsed (not deleted)
+            accent.gameObject.SetActive(false);
             view._accent = accent;
 
+            // Icon: 72x72, left aligned at x=20, vertically centered
             var icon = CreateRect("Icon", view._panel, new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(72, 72));
             icon.anchoredPosition = new Vector2(20, 0);
             view._icon = icon.gameObject.AddComponent<Image>();
             view._icon.preserveAspect = true;
             view._icon.raycastTarget = false;
 
-            view._header = CreateText("Header", view._panel, font, 13, FontStyle.Bold, effectiveAccentColor, 14);
-            view._title = CreateText("Title", view._panel, font, 20, FontStyle.Bold, Color.white, 34);
-            view._description = CreateText("Description", view._panel, font, 15, FontStyle.Normal, new Color(0.79f, 0.78f, 0.84f), 60);
+            // Text components with BestFit enabled and strict bounds to guarantee text never overflows
+            // Available text width: 440 - 108 (left) - 16 (right margin) = 316
+            view._header = CreateText("Header", view._panel, font, 12, 9, FontStyle.Bold, effectiveAccentColor, 108, 12, 316, 16);
+            view._title = CreateText("Title", view._panel, font, 18, 12, FontStyle.Bold, Color.white, 108, 30, 316, 27);
+            view._description = CreateText("Description", view._panel, font, 14, 10, FontStyle.Normal, new Color(0.82f, 0.82f, 0.88f), 108, 58, 316, 42);
 
             view.SetMargin(Vector2.zero);
             view.SetVisibility(0f);
@@ -212,18 +225,30 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             return rect;
         }
 
-        private static Text CreateText(string name, Transform parent, Font font, int size, FontStyle style, Color color, float top)
+        private static Text CreateText(string name, Transform parent, Font font, int maxSize, int minSize, FontStyle style, Color color, float left, float top, float width, float height)
         {
-            var rect = CreateRect(name, parent, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, 1), new Vector2(-124, size + 10));
-            rect.anchoredPosition = new Vector2(108, -top + 4);
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0, 1);
+            rect.anchorMax = new Vector2(0, 1);
+            rect.pivot = new Vector2(0, 1);
+            rect.anchoredPosition = new Vector2(left, -top);
+            rect.sizeDelta = new Vector2(width, height);
+
             var text = rect.gameObject.AddComponent<Text>();
             text.font = font;
-            text.fontSize = size;
+            text.fontSize = maxSize;
+            text.resizeTextForBestFit = true;
+            text.resizeTextMinSize = minSize;
+            text.resizeTextMaxSize = maxSize;
             text.fontStyle = style;
             text.color = color;
             text.raycastTarget = false;
+            text.alignment = TextAnchor.UpperLeft;
             text.horizontalOverflow = HorizontalWrapMode.Wrap;
             text.verticalOverflow = VerticalWrapMode.Truncate;
+            text.lineSpacing = 1.05f;
             return text;
         }
     }
@@ -237,9 +262,20 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
     {
         private enum Phase { Idle, WaitingForText, Enter, Hold, Exit }
 
+        private static readonly Dictionary<string, string> FallbackHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "en", "ACHIEVEMENT UNLOCKED" },
+            { "tr", "BAŞARIM AÇILDI" },
+            { "es", "LOGRO DESBLOQUEADO" },
+            { "fr", "SUCCÈS DÉVERROUILLÉ" },
+            { "ru", "ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО" }
+        };
+
         [Header("Presentation")]
         [SerializeField] private AchievementToastView _toastPrefab;
         [SerializeField] private string _headerText = "ACHIEVEMENT UNLOCKED";
+        [SerializeField] private string _headerLocalizationTable = "ST_Achievements";
+        [SerializeField] private string _headerLocalizationKey = "achievement_unlocked";
         [SerializeField] private Vector2 _margin = Vector2.zero;
         [SerializeField] private int _sortingOrder = 32000;
         [SerializeField] private Font _customFont;
@@ -400,7 +436,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 _iconFinal = true;
             }
 
-            _view.SetContent(_headerText, _current.Title, _current.Description, icon);
+            string localizedHeader = ResolveLocalizedHeader();
+            _view.SetContent(localizedHeader, _current.Title, _current.Description, icon);
             _view.SetVisibility(0f);
             _view.gameObject.SetActive(true);
             ShownCount++;
@@ -445,7 +482,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             }
             catch (System.Exception e)
             {
-                Debug.LogException(e); // GetIconAsync itself never throws; a faulted task would be a bug worth surfacing
+                Debug.LogException(e);
             }
             _pendingIconTask = null;
         }
@@ -469,6 +506,61 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         {
             _phase = phase;
             _phaseTime = 0f;
+        }
+
+        private string ResolveLocalizedHeader()
+        {
+            // 1. Attempt lookup via Unity Localization StringDatabase
+            if (!string.IsNullOrEmpty(_headerLocalizationTable) && !string.IsNullOrEmpty(_headerLocalizationKey))
+            {
+                string text = TryLookupLocalizedString(_headerLocalizationTable, _headerLocalizationKey);
+                if (!string.IsNullOrEmpty(text)) return text;
+            }
+
+            // 2. Fall back to supported system language if active language has no translation
+            string sysCode = GetSupportedLanguageCode(Application.systemLanguage);
+            if (FallbackHeaders.TryGetValue(sysCode, out var sysHeader))
+            {
+                return sysHeader;
+            }
+
+            // 3. Fall back to inspector default
+            return !string.IsNullOrEmpty(_headerText) ? _headerText : "ACHIEVEMENT UNLOCKED";
+        }
+
+        private static string TryLookupLocalizedString(string table, string key)
+        {
+            try
+            {
+                var locType = Type.GetType("UnityEngine.Localization.Settings.LocalizationSettings, Unity.Localization");
+                if (locType == null) return null;
+
+                var dbProp = locType.GetProperty("StringDatabase", BindingFlags.Public | BindingFlags.Static);
+                var db = dbProp?.GetValue(null);
+                if (db == null) return null;
+
+                var method = db.GetType().GetMethod("GetLocalizedString", new Type[] { typeof(string), typeof(string) });
+                if (method != null)
+                {
+                    var result = method.Invoke(db, new object[] { table, key }) as string;
+                    if (!string.IsNullOrEmpty(result)) return result;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string GetSupportedLanguageCode(SystemLanguage lang)
+        {
+            switch (lang)
+            {
+                case SystemLanguage.Turkish: return "tr";
+                case SystemLanguage.Spanish: return "es";
+                case SystemLanguage.French: return "fr";
+                case SystemLanguage.Russian: return "ru";
+                case SystemLanguage.English: return "en";
+                default: return "en"; // If system language is unsupported, fallback to English
+            }
         }
 
         private static float Ease(float t)
