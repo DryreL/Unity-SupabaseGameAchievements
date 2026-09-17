@@ -48,6 +48,8 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
         [SerializeField] private float _remoteConfigPollSeconds = 60f;
 
         [SerializeField] private AudioClip _unlockSound;
+        [Tooltip("How long (seconds) an unlocked achievement notification stays on screen before fading out.")]
+        [SerializeField] private float _toastHoldDuration = 4.5f;
 
         [Tooltip("Shown instead of an achievement's own icon when it cannot be loaded (e.g. an achievement " +
             "added later purely through Remote Config, whose art was never packaged in this build). Leave " +
@@ -145,6 +147,7 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
                 IconResourcesPrefix = _iconResourcesPrefix,
                 FallbackIcon = _fallbackIcon,
                 UnlockSound = _unlockSound,
+                ToastHoldDuration = _toastHoldDuration,
                 VerboseLogging = Debug.isDebugBuild,
             }, auth, CreateLocalizationProviderIfAvailable());
         }
@@ -227,4 +230,5 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
         }
     }
 }
+
 

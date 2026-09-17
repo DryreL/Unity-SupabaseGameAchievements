@@ -95,13 +95,13 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
             view._panel = CreateRect("Panel", root.transform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(1, 0), new Vector2(440, 104));
             var background = view._panel.gameObject.AddComponent<Image>();
-            background.color = new Color(0.07f, 0.06f, 0.10f, 0.94f);
+            background.color = new Color(0f, 0f, 0f, 0.8f);
             background.raycastTarget = false;
             view._canvasGroup = view._panel.gameObject.AddComponent<CanvasGroup>();
             view._canvasGroup.interactable = false;
             view._canvasGroup.blocksRaycasts = false;
 
-            var accent = CreateRect("Accent", view._panel, new Vector2(0, 0), new Vector2(0, 1), new Vector2(0, 0.5f), new Vector2(4, 0));
+            var accent = CreateRect("Accent", view._panel, new Vector2(1, 0), new Vector2(1, 1), new Vector2(1, 0.5f), new Vector2(4, 0));
             var accentImage = accent.gameObject.AddComponent<Image>();
             accentImage.color = new Color(0.91f, 0.23f, 0.44f, 1f);
             accentImage.raycastTarget = false;
@@ -166,7 +166,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
         [Header("Timing (seconds)")]
         [SerializeField] private float _enterDuration = 0.25f;
-        [SerializeField] private float _holdDuration = 2.25f;
+        [SerializeField] private float _holdDuration = 4.5f;
         [SerializeField] private float _exitDuration = 0.5f;
         [Tooltip("How long to wait for localized text before showing fallback text.")]
         [SerializeField] private float _localizationGrace = 0.2f;
@@ -203,6 +203,12 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             _holdDuration = Mathf.Max(0f, hold);
             _exitDuration = Mathf.Max(0f, exit);
             _localizationGrace = Mathf.Max(0f, localizationGrace);
+        }
+
+        public float HoldDuration
+        {
+            get => _holdDuration;
+            set => _holdDuration = Mathf.Max(0f, value);
         }
 
         public AudioClip UnlockSound
@@ -361,4 +367,6 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         }
     }
 }
+
+
 

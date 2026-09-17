@@ -79,6 +79,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             public string IconResourcesPrefix = "";
             public Sprite FallbackIcon;
             public AudioClip UnlockSound;
+            public float ToastHoldDuration = 4.5f;
             public bool VerboseLogging;
         }
 
@@ -108,7 +109,11 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             go.SetActive(true);
 
             host.Initialize(auth, localization);
-            if (config.UnlockSound != null && host._overlay != null) host._overlay.UnlockSound = config.UnlockSound;
+            if (host._overlay != null)
+            {
+                if (config.UnlockSound != null) host._overlay.UnlockSound = config.UnlockSound;
+                if (config.ToastHoldDuration > 0f) host._overlay.HoldDuration = config.ToastHoldDuration;
+            }
             return host;
         }
 
@@ -319,4 +324,5 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         }
     }
 }
+
 
