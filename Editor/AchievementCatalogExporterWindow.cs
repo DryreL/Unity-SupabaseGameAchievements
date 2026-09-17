@@ -114,7 +114,9 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 _outputPath = EditorGUILayout.TextField(new GUIContent("Output Path", "Where the manifest JSON is written."), _outputPath);
                 if (GUILayout.Button("Browse...", GUILayout.Width(70)))
                 {
-                    string defaultName = string.IsNullOrEmpty(_gameSlug) ? "achievements" : _gameSlug + "-achievements";
+                    // Matches PatreonAchievementsBootstrap's default Manifest Resource Path
+                    // ("Achievements/achievements") so the zero-config path works with no extra typing.
+                    string defaultName = "achievements";
                     string defaultDir = string.IsNullOrEmpty(_outputPath)
                         ? Path.Combine(Application.dataPath, "Resources", "Achievements")
                         : Path.GetDirectoryName(Path.GetFullPath(_outputPath));
@@ -123,9 +125,10 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 }
                 EditorGUILayout.EndHorizontal();
 
-                if (string.IsNullOrEmpty(_outputPath) && !string.IsNullOrEmpty(_gameSlug))
-                    EditorGUILayout.HelpBox("Suggested: Assets/Resources/Achievements/" + _gameSlug + "-achievements.json " +
-                        "(Resources, so the game can load it even if nothing assigns it in the Inspector).", MessageType.None);
+                if (string.IsNullOrEmpty(_outputPath))
+                    EditorGUILayout.HelpBox("Suggested: Assets/Resources/Achievements/achievements.json " +
+                        "(matches PatreonAchievementsBootstrap's default Manifest Resource Path, so the game " +
+                        "loads it automatically even if nothing is assigned in the Inspector).", MessageType.None);
 
                 EditorGUILayout.Space(8);
                 EditorGUILayout.LabelField("Unreleased games only", EditorStyles.boldLabel);

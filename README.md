@@ -188,19 +188,37 @@ Package Manager for a starting point.
 
 ### 6. Bootstrap once
 
+**If your game uses DryreL Hub's Unity Patreon Authenticator** (most DryreL Hub games do), no code is
+needed at all:
+
+1. Package Manager → this package → Samples → **Patreon Integration** → Import.
+2. **Tools → DryreL Hub → Setup Achievements (Patreon) In Scene**. This adds a
+   `PatreonAchievementsBootstrap` to the open scene, wired to `PatreonManager`'s real sign-in events.
+3. Check the Inspector: Supabase URL/Key auto-fill from `Resources/PatreonConfig.asset` if present;
+   the manifest auto-loads from `Resources/Achievements/achievements.json` if the **Manifest** field is
+   left empty (matches the Export tool's default output path, step 3). Fill in anything that wasn't
+   auto-filled, save the scene, done.
+
+This sample requires that plugin to be in the project (it references it directly, on purpose — it is a
+DryreL Hub product for DryreL Hub games) and is not imported by default, so projects without it are
+never affected by it.
+
+**Otherwise** (a different sign-in system, or no Patreon at all), wire it by hand — this is exactly what
+`PatreonAchievementsBootstrap` above does internally, generalized to any identity system via two plain
+delegates:
+
 ```csharp
 using DryreLHub.SupabaseGameAchievements;
 using DryreLHub.SupabaseGameAchievements.Unity;
 
 var identity = new ExternalIdentitySessionSource(
-    "https://PROJECT.supabase.co/functions/v1/patreon-middleware?action=supabase-session",
+    "https://PROJECT.supabase.co/functions/v1/patreon-middleware?action=supabase-session", // or your own endpoint
     supabasePublishableKey,
     UnityAchievementManager.Transport,
-    hasIdentity: () => PatreonManager.Instance != null && PatreonManager.Instance.IsUserAuthenticated(),
-    getIdentityToken: () => PatreonManager.Instance != null ? PatreonManager.Instance.GetValidAccessToken() : null,
+    hasIdentity: () => /* is the player signed in? */ false,
+    getIdentityToken: () => /* a current identity access token, or null */ null,
     tokenFieldName: "patreon_access_token");
-PatreonManager.OnUserAuthenticated += _ => identity.NotifyIdentityChanged();
-PatreonManager.OnUserSignedOut += identity.NotifyIdentityChanged;
+// Call identity.NotifyIdentityChanged() from your sign-in system's sign-in/sign-out callbacks.
 
 var auth = new SupabaseSessionAuthProvider(supabaseUrl, supabasePublishableKey, UnityAchievementManager.Transport, identity);
 
@@ -209,7 +227,7 @@ UnityAchievementManager.Create(new UnityAchievementManager.Config
     CatalogJson = manifestTextAsset,
     SupabaseUrl = supabaseUrl,
     SupabasePublishableKey = supabasePublishableKey,  // publishable/anon key only
-    SharedSettingsFolder = "DryreL Hub",           // launcher's shared settings folder
+    SharedSettingsFolder = Application.companyName,   // or whatever your launcher's shared settings folder is
     IconResourcesPrefix = "Achievements/",
     UnlockSound = unlockClip,
 }, auth, new UnityLocalizationProvider());           // or null without Unity Localization

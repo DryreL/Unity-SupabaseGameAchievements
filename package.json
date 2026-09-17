@@ -18,6 +18,11 @@
                         "displayName":  "Dialogue System Integration",
                         "description":  "Lua functions UnlockAchievement/HasAchievement and the UnlockAchievement() sequencer command for Dialogue System for Unity (Pixel Crushers).",
                         "path":  "Samples~/DialogueSystemIntegration"
+                    },
+                    {
+                        "displayName":  "Patreon Integration",
+                        "description":  "Ready-to-use PatreonAchievementsBootstrap for games built on DryreL Hub's Unity Patreon Authenticator, plus a Tools > DryreL Hub > Setup Achievements (Patreon) In Scene menu command that adds it with no code. Requires that plugin to be in the project - import this sample only if you have it, so projects without it are never affected.",
+                        "path":  "Samples~/PatreonIntegration"
                     }
                 ],
     "author":  {
