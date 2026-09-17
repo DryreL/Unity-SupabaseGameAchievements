@@ -1,0 +1,39 @@
+{
+  "formatVersion": 1,
+  "game": "example-game",
+  "gameId": 1,
+  "catalogVersion": 3,
+  "achievements": [
+    {
+      "id": 1,
+      "key": "first_blood",
+      "bitIndex": 0,
+      "title": "First Blood",
+      "description": "Defeat your first enemy.",
+      "icon": "achievements/first_blood",
+      "hidden": false,
+      "displayOrder": 0,
+      "localization": { "table": "ST_Achievements", "titleKey": "first_blood_title", "descriptionKey": "first_blood_description" }
+    },
+    {
+      "id": 2,
+      "key": "lava_walker",
+      "bitIndex": 1,
+      "title": "Lava Walker",
+      "description": "Cross the lava field without falling.",
+      "icon": "achievements/lava_walker",
+      "hidden": false,
+      "displayOrder": 1
+    },
+    {
+      "id": 3,
+      "key": "centurion",
+      "bitIndex": 2,
+      "title": "Centurion",
+      "description": "Defeat 100 enemies.",
+      "icon": "achievements/centurion",
+      "hidden": true,
+      "displayOrder": 2
+    }
+  ]
+}

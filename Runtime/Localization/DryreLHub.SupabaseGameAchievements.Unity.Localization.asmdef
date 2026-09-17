@@ -1,0 +1,28 @@
+﻿{
+    "name": "DryreLHub.SupabaseGameAchievements.Unity.Localization",
+    "rootNamespace": "DryreLHub.SupabaseGameAchievements.Unity",
+    "references": [
+        "DryreLHub.SupabaseGameAchievements",
+        "DryreLHub.SupabaseGameAchievements.Unity",
+        "Unity.Localization",
+        "Unity.ResourceManager"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "ACHIEVEMENTS_UNITY_LOCALIZATION"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.localization",
+            "expression": "1.0.0",
+            "define": "ACHIEVEMENTS_UNITY_LOCALIZATION"
+        }
+    ],
+    "noEngineReferences": false
+}
+

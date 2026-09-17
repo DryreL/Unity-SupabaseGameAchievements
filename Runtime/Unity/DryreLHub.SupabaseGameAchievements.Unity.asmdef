@@ -1,0 +1,18 @@
+﻿{
+    "name": "DryreLHub.SupabaseGameAchievements.Unity",
+    "rootNamespace": "DryreLHub.SupabaseGameAchievements.Unity",
+    "references": [
+        "DryreLHub.SupabaseGameAchievements",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
+

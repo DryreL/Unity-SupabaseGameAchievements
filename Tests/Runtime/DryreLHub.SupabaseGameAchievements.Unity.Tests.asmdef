@@ -1,0 +1,24 @@
+﻿{
+    "name": "DryreLHub.SupabaseGameAchievements.Unity.Tests",
+    "rootNamespace": "DryreLHub.SupabaseGameAchievements.Unity.Tests",
+    "references": [
+        "DryreLHub.SupabaseGameAchievements",
+        "DryreLHub.SupabaseGameAchievements.Unity",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
+
