@@ -194,6 +194,32 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             }
         }
 
+        /// <summary>
+        /// Clears all local storage files (unlocked and pending achievements) on disk for this game
+        /// and re-initializes an empty local state.
+        /// </summary>
+        public void ResetLocalState()
+        {
+            if (_system != null)
+            {
+                string storageDirectory = Path.Combine(Application.persistentDataPath, "achievements", _system.Catalog.GameSlug);
+                if (Directory.Exists(storageDirectory))
+                {
+                    try
+                    {
+                        Directory.Delete(storageDirectory, true);
+                    }
+                    catch (Exception e)
+                    {
+                        _logger?.Warning("Failed to delete local achievements directory: " + e.Message);
+                    }
+                }
+            }
+            Initialize(_lastAuth, _lastLocalization);
+            _logger?.Info("Local achievements state has been reset.");
+        }
+
+
         private void InitializeWithCatalog(AchievementCatalog catalog, IAchievementAuthProvider auth, IAchievementLocalizationProvider localization)
         {
             _lastAuth = auth;

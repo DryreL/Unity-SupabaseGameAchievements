@@ -1,5 +1,7 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
+using DryreLHub.SupabaseGameAchievements.Unity;
 using UnityEditor;
 using UnityEngine;
 
@@ -21,8 +23,47 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private string _lastActionStatus = "";
         private bool _busy;
 
-        [MenuItem("Tools/DryreL Hub/Supabase Game Achievements/Achievement Debug Window")]
+        [MenuItem("Tools/DryreL Hub/Supabase Game Achievements/Achievement Debug Window", priority = 30)]
         private static void Open() => GetWindow<AchievementDebugWindow>("Achievement Debug").minSize = new Vector2(420, 320);
+
+        [MenuItem("Tools/DryreL Hub/Supabase Game Achievements/Clear Local Achievements (Reset)", priority = 200)]
+        public static void ClearLocalAchievements()
+        {
+            string dir = Path.Combine(Application.persistentDataPath, "achievements");
+            bool confirm = EditorUtility.DisplayDialog(
+                "Clear Local Achievements",
+                $"Are you sure you want to delete all locally stored achievements on disk?\n\nStorage Path:\n{dir}\n\nThis will reset all unlocked and pending status.",
+                "Yes, Reset",
+                "Cancel");
+
+            if (!confirm) return;
+
+            int deletedFiles = 0;
+            if (Directory.Exists(dir))
+            {
+                var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
+                deletedFiles = files.Length;
+                try
+                {
+                    Directory.Delete(dir, true);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[Achievements] Failed to delete achievements directory: {ex.Message}");
+                }
+            }
+
+            if (Application.isPlaying && UnityAchievementManager.Instance != null)
+            {
+                UnityAchievementManager.Instance.ResetLocalState();
+            }
+
+            Debug.Log($"[Achievements] Local achievement storage cleared successfully. ({deletedFiles} file(s) deleted from {dir})");
+            EditorUtility.DisplayDialog(
+                "Achievements Cleared",
+                $"Local achievements have been reset successfully!\n\nDeleted {deletedFiles} file(s) from:\n{dir}",
+                "OK");
+        }
 
         private void OnEnable() => EditorApplication.update += Repaint;
 
@@ -32,13 +73,21 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         {
             if (!Application.isPlaying)
             {
-                EditorGUILayout.HelpBox("Enter Play Mode to inspect and exercise achievements.", MessageType.Info);
+                EditorGUILayout.HelpBox("Enter Play Mode to inspect and exercise achievements.\n\nYou can also reset local storage at any time using the button below or via Tools > DryreL Hub > Supabase Game Achievements > Clear Local Achievements (Reset).", MessageType.Info);
+                if (GUILayout.Button("Clear Local Achievements From Disk", GUILayout.Height(28)))
+                {
+                    ClearLocalAchievements();
+                }
                 return;
             }
 
             if (!AchievementManager.IsInitialized)
             {
                 EditorGUILayout.HelpBox("AchievementManager is not initialized yet in this scene.", MessageType.Warning);
+                if (GUILayout.Button("Clear Local Achievements From Disk", GUILayout.Height(28)))
+                {
+                    ClearLocalAchievements();
+                }
                 return;
             }
 
@@ -58,6 +107,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             {
                 if (GUILayout.Button("Sync Now")) RunAsync("Sync", system.SyncAsync());
                 if (GUILayout.Button("Reconcile From Server")) RunAsync("Reconcile", system.SyncServerStateAsync());
+                if (GUILayout.Button("Clear Local State")) ClearLocalAchievements();
             }
 
             if (!string.IsNullOrEmpty(_lastActionStatus)) EditorGUILayout.HelpBox(_lastActionStatus, MessageType.None);
