@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -158,6 +159,49 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         }
 
         // ==========================================
+        // Reset / Clear Local Achievements
+        // ==========================================
+
+        /// <summary>
+        /// Deletes all locally stored achievement data (unlocked states, pending syncs, and backup bins) from disk,
+        /// and resets the in-memory achievement state.
+        /// </summary>
+        public static void ClearLocalAchievements()
+        {
+            string dir = Path.Combine(Application.persistentDataPath, "achievements");
+            int deletedFiles = 0;
+            if (Directory.Exists(dir))
+            {
+                try
+                {
+                    var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
+                    deletedFiles = files.Length;
+                    Directory.Delete(dir, true);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[AchievementManagerProxy] Failed to delete local achievements directory: {ex.Message}");
+                }
+            }
+
+            if (UnityAchievementManager.Instance != null)
+            {
+                UnityAchievementManager.Instance.ResetLocalState();
+            }
+            else if (AchievementManager.IsInitialized)
+            {
+                AchievementManager.Shutdown();
+            }
+
+            Debug.Log($"[AchievementManagerProxy] Local achievement storage cleared ({deletedFiles} file(s) removed).");
+        }
+
+        /// <summary>
+        /// Alias for <see cref="ClearLocalAchievements"/>.
+        /// </summary>
+        public static void ResetLocalState() => ClearLocalAchievements();
+
+        // ==========================================
         // Static Facade API (Code-First Access)
         // ==========================================
 
@@ -224,6 +268,16 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         public void Sync()
         {
             _ = SyncAsync();
+        }
+
+        /// <summary>
+        /// Clears all local achievement files from disk and resets state.
+        /// Can be called via Unity UI Button OnClick() or right-clicking this component in the Inspector.
+        /// </summary>
+        [ContextMenu("Clear Local Achievements (Reset)")]
+        public void ResetLocalAchievements()
+        {
+            ClearLocalAchievements();
         }
     }
 }
