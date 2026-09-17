@@ -225,6 +225,30 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         }
 
 
+        private static IAchievementLocalizationProvider AutoDetectLocalizationProvider(IAchievementLogger logger)
+        {
+            try
+            {
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    var type = asm.GetType("DryreLHub.SupabaseGameAchievements.Unity.UnityLocalizationProvider");
+                    if (type != null)
+                    {
+                        var provider = Activator.CreateInstance(type, new object[] { logger }) as IAchievementLocalizationProvider;
+                        if (provider != null)
+                        {
+                            logger?.Info("Auto-detected and activated UnityLocalizationProvider for achievement localization.");
+                            return provider;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger?.Warning("Failed to auto-create UnityLocalizationProvider: " + ex.Message);
+            }
+            return DefaultAchievementLocalizationProvider.Instance;
+        }
         private void InitializeWithCatalog(AchievementCatalog catalog, IAchievementAuthProvider auth, IAchievementLocalizationProvider localization)
         {
             _lastAuth = auth;
@@ -240,6 +264,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 if (!hasBackend && auth != null)
                     _logger.Warning("An auth provider was supplied but no Supabase URL/key is configured; achievements stay local-only.");
 
+                var effectiveLocalization = localization ?? AutoDetectLocalizationProvider(_logger);
+
                 _settings = !_enableOverlay
                     ? null
                     : string.IsNullOrEmpty(_sharedSettingsFolder)
@@ -253,7 +279,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                     ApiClient = hasBackend ? new SupabaseAchievementApiClient(_supabaseUrl, _supabasePublishableKey, Transport) : null,
                     AuthProvider = auth ?? OfflineAchievementAuthProvider.Instance,
                     NotificationSettings = _settings,
-                    Localization = localization ?? DefaultAchievementLocalizationProvider.Instance,
+                    Localization = effectiveLocalization,
                     Logger = _logger,
                     Dispatcher = UnityMainThreadDispatcher.Instance,
                     BackgroundWrites = Application.platform != RuntimePlatform.WebGLPlayer,
@@ -262,7 +288,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 if (_system.Notifications != null)
                 {
                     if (_overlay == null) _overlay = gameObject.AddComponent<UnityAchievementOverlay>();
-                    _overlay.Bind(_system.Notifications, new ResourcesAchievementIconProvider(_iconResourcesPrefix, _fallbackIcon));
+                    _overlay.Bind(_system.Notifications, new ResourcesAchievementIconProvider(_iconResourcesPrefix, _fallbackIcon), effectiveLocalization);
                 }
 
                 _logger.Info("Initialized " + catalog.Count + " achievements for '" + catalog.GameSlug + "' (catalog v" + catalog.CatalogVersion + ", " + _system.UnlockedCount + " unlocked, " + _system.PendingSyncCount + " pending sync).");

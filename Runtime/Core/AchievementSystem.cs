@@ -67,6 +67,8 @@ namespace DryreLHub.SupabaseGameAchievements
             if (options.NotificationSettings != null)
                 Notifications = new AchievementNotificationService(options.NotificationSettings, options.Localization, _logger);
 
+            Localization = options.Localization ?? DefaultAchievementLocalizationProvider.Instance;
+
             if (options.ApiClient != null)
             {
                 _sync = new AchievementSyncService(
@@ -90,6 +92,8 @@ namespace DryreLHub.SupabaseGameAchievements
 
         /// <summary>Null when notifications are disabled in options.</summary>
         public AchievementNotificationService Notifications { get; }
+
+        public IAchievementLocalizationProvider Localization { get; }
 
         public AchievementStore Store => _store;
 

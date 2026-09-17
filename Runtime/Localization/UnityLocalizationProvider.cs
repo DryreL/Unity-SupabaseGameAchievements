@@ -11,15 +11,9 @@ using UnityEngine.ResourceManagement.AsyncOperations;
 namespace DryreLHub.SupabaseGameAchievements.Unity
 {
     /// <summary>
-    /// <see cref="IAchievementLocalizationProvider"/> backed by the Unity Localization package. Only compiled
-    /// when com.unity.localization is installed (assembly define constraint), so the core never depends on it.
+    /// <see cref="IAchievementLocalizationProvider"/> backed directly by Unity Localization.
+    /// Resolves strings in the active Game Language (LocalizationSettings.SelectedLocale).
     /// </summary>
-    /// <remarks>
-    /// Resolution per field: the achievement's <c>localization.table</c> + <c>titleKey</c>/<c>descriptionKey</c>
-    /// in the currently selected locale. If the selected language does not support the achievement or is missing,
-    /// it falls back to the supported system language, and then to the manifest's default text.
-    /// Call from the main thread (Unity Localization's own requirement).
-    /// </remarks>
     public sealed class UnityLocalizationProvider : IAchievementLocalizationProvider, IDisposable
     {
         private readonly Dictionary<long, AchievementText> _cache = new Dictionary<long, AchievementText>();
@@ -27,7 +21,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private readonly HashSet<string> _reportedFailures = new HashSet<string>(StringComparer.Ordinal);
         private int _localeGeneration;
 
-        public UnityLocalizationProvider(IAchievementLogger logger = null)
+        public UnityLocalizationProvider() : this(null) { }
+
+        public UnityLocalizationProvider(IAchievementLogger logger)
         {
             _logger = logger ?? new UnityAchievementLogger(false);
             LocalizationSettings.SelectedLocaleChanged += OnSelectedLocaleChanged;
@@ -49,54 +45,52 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
             try
             {
-                if (!LocalizationSettings.InitializationOperation.IsDone) return false;
-                var tableOperation = LocalizationSettings.StringDatabase.GetTableAsync(definition.LocalizationTable);
-                if (!tableOperation.IsDone) return false;
+                if (LocalizationSettings.InitializationOperation.IsDone)
+                {
+                    string title = LocalizationSettings.StringDatabase.GetLocalizedString(definition.LocalizationTable, definition.TitleKey);
+                    string description = LocalizationSettings.StringDatabase.GetLocalizedString(definition.LocalizationTable, definition.DescriptionKey);
 
-                var table = tableOperation.Status == AsyncOperationStatus.Succeeded ? tableOperation.Result : null;
-                text = Resolve(definition, table);
-                _cache[definition.Id] = text;
-                return true;
+                    if (IsValid(title) || IsValid(description))
+                    {
+                        text = new AchievementText(
+                            IsValid(title) ? title : definition.Title,
+                            IsValid(description) ? description : definition.Description
+                        );
+                        _cache[definition.Id] = text;
+                        return true;
+                    }
+                }
             }
             catch (Exception e)
             {
                 ReportOnce(definition.LocalizationTable, e);
-                text = AchievementText.Fallback(definition);
-                return true;
             }
+
+            text = AchievementText.Fallback(definition);
+            return false;
         }
 
         public async Task<AchievementText> GetTextAsync(AchievementDefinition definition, CancellationToken cancellationToken)
         {
-            if (TryGetText(definition, out var ready)) return ready;
+            if (TryGetText(definition, out var ready) && IsValid(ready.Title)) return ready;
 
             int generation = _localeGeneration;
             try
             {
                 await LocalizationSettings.InitializationOperation.Task;
-                var table = await LocalizationSettings.StringDatabase.GetTableAsync(definition.LocalizationTable).Task;
-                var text = Resolve(definition, table);
 
-                // If fields are still missing/empty and active language doesn't support them, fallback to supported system language
-                if (string.IsNullOrEmpty(text.Title) || string.IsNullOrEmpty(text.Description))
-                {
-                    try
-                    {
-                        string code = GetSupportedLanguageCode(Application.systemLanguage);
-                        var fallbackLocale = LocalizationSettings.AvailableLocales?.GetLocale(code);
-                        if (fallbackLocale != null)
-                        {
-                            var fallbackTable = await LocalizationSettings.StringDatabase.GetTableAsync(definition.LocalizationTable, fallbackLocale).Task;
-                            if (fallbackTable != null && fallbackTable != table)
-                            {
-                                string t = Lookup(fallbackTable, definition.TitleKey) ?? text.Title;
-                                string d = Lookup(fallbackTable, definition.DescriptionKey) ?? text.Description;
-                                text = new AchievementText(t ?? definition.Title, d ?? definition.Description);
-                            }
-                        }
-                    }
-                    catch { }
-                }
+                var titleOp = LocalizationSettings.StringDatabase.GetLocalizedStringAsync(definition.LocalizationTable, definition.TitleKey);
+                var descOp = LocalizationSettings.StringDatabase.GetLocalizedStringAsync(definition.LocalizationTable, definition.DescriptionKey);
+
+                await Task.WhenAll(titleOp.Task, descOp.Task);
+
+                string title = titleOp.Result;
+                string description = descOp.Result;
+
+                var text = new AchievementText(
+                    IsValid(title) ? title : definition.Title,
+                    IsValid(description) ? description : definition.Description
+                );
 
                 if (generation == _localeGeneration) _cache[definition.Id] = text;
                 return text;
@@ -108,68 +102,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             }
         }
 
-        private AchievementText Resolve(AchievementDefinition definition, StringTable table)
+        private static bool IsValid(string s)
         {
-            if (table == null) ReportOnce(definition.LocalizationTable, null);
-            string title = Lookup(table, definition.TitleKey);
-            string description = Lookup(table, definition.DescriptionKey);
-
-            // Fallback to supported system language if current table doesn't have the entry
-            if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(description))
-            {
-                var fallbackTable = ResolveSupportedSystemLocaleTable(definition.LocalizationTable);
-                if (fallbackTable != null && fallbackTable != table)
-                {
-                    if (string.IsNullOrEmpty(title)) title = Lookup(fallbackTable, definition.TitleKey);
-                    if (string.IsNullOrEmpty(description)) description = Lookup(fallbackTable, definition.DescriptionKey);
-                }
-            }
-
-            title = title ?? definition.Title;
-            description = description ?? definition.Description;
-            return new AchievementText(title, description);
-        }
-
-        private StringTable ResolveSupportedSystemLocaleTable(string tableName)
-        {
-            if (string.IsNullOrEmpty(tableName)) return null;
-            try
-            {
-                string code = GetSupportedLanguageCode(Application.systemLanguage);
-                var locale = LocalizationSettings.AvailableLocales?.GetLocale(code);
-                if (locale != null)
-                {
-                    var op = LocalizationSettings.StringDatabase.GetTableAsync(tableName, locale);
-                    if (op.IsDone && op.Status == AsyncOperationStatus.Succeeded)
-                    {
-                        return op.Result;
-                    }
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        public static string GetSupportedLanguageCode(SystemLanguage lang)
-        {
-            switch (lang)
-            {
-                case SystemLanguage.Turkish: return "tr";
-                case SystemLanguage.Spanish: return "es";
-                case SystemLanguage.French: return "fr";
-                case SystemLanguage.Russian: return "ru";
-                case SystemLanguage.English: return "en";
-                default: return "en"; // Default supported system language
-            }
-        }
-
-        private static string Lookup(StringTable table, string key)
-        {
-            if (table == null || string.IsNullOrEmpty(key)) return null;
-            var entry = table.GetEntry(key);
-            if (entry == null) return null;
-            string value = entry.GetLocalizedString();
-            return string.IsNullOrEmpty(value) ? null : value;
+            return !string.IsNullOrEmpty(s) && !s.StartsWith("No translation found for");
         }
 
         private void OnSelectedLocaleChanged(Locale locale)
