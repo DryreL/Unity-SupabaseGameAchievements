@@ -1,4 +1,4 @@
-﻿# Supabase Game Achievements (com.DryreLHub.SupabaseGameAchievements)
+﻿# Supabase Game Achievements (com.dryrelhub.supabasegameachievements)
 
 Offline-first achievements for games: instant local unlocks, crash-safe saves, batched idempotent
 server sync, an optional unlock overlay, and optional Unity Localization. The design, security
@@ -32,7 +32,7 @@ Requirements: Unity 2022.3+ (tested on 6000.3), `com.unity.nuget.newtonsoft-json
 3. Select **Add package from git URL...**
 4. Paste the git repository URL:
    `	ext
-   https://github.com/DryreL/SupabaseGameAchievements.git
+   https://github.com/DryreL/Unity-SupabaseGameAchievements.git
    `
 5. Click **Add**.
 
@@ -40,7 +40,7 @@ Requirements: Unity 2022.3+ (tested on 6000.3), `com.unity.nuget.newtonsoft-json
 
 Add the following line to your Packages/manifest.json under "dependencies":
 `json
-"com.DryreLHub.SupabaseGameAchievements": "https://github.com/DryreL/SupabaseGameAchievements.git"
+"com.dryrelhub.supabasegameachievements": "https://github.com/DryreL/Unity-SupabaseGameAchievements.git"
 `
 
 ## Registering achievements for a new game
@@ -110,7 +110,12 @@ don't know the achievement; nothing breaks.
 Upload `<key>.webp` (≤ 256 KB) to the `achievement-assets` bucket under `<game-slug>/`. These are
 for the launcher and web profiles only. Games use packaged icons.
 
-### 3. Export the manifest into the game
+### 3. Get the manifest into the game
+
+Two ways to ship a manifest, and they combine: the bundled file is always required as the offline
+fallback; Remote Config (if you use it) can only override it, never replace it.
+
+**3a. Bundled file (always do this one).**
 
 ```bash
 node scripts/export-achievement-catalog.mjs my-game ../MyGame/Assets/Achievements/achievements.json
@@ -118,13 +123,35 @@ node scripts/export-achievement-catalog.mjs my-game ../MyGame/Assets/Achievement
 
 (From the launcher repo. Uses `SUPABASE_PUBLISHABLE_KEY` from `.env`. For an inactive game set
 `SUPABASE_EXPORT_KEY` to a secret key in your shell. Never commit that key or ship it.) Re-run whenever
-the catalog changes. The output is deterministic, so unchanged catalogs produce no diff.
+the catalog changes and commit the JSON. The output is deterministic, so an unchanged catalog produces
+no diff. Assign it to `UnityAchievementManager`'s `Catalog Json` field (or `Config.CatalogJson`).
+
+**3b. Remote Config override (optional).** Lets you push a title/description/new-achievement update
+without a new build, on top of Unity Remote Config already configured in your project (this package
+never starts a Remote Config fetch itself; something else in your project already does that, e.g. at
+startup). Take the exact same exported JSON from step 3a and paste it as the value of a Remote Config
+key (String type), e.g. `achievement_catalog_my-game`, in the Unity Cloud Dashboard for your linked
+project's Remote Config environment. Set `UnityAchievementManager`'s `Remote Config Key` field (or
+`Config.RemoteConfigKey`) to that same key name.
+
+At startup, `RemoteConfigAchievementCatalogSource` compares the bundled manifest, its own on-disk cache
+of the last Remote Config value that won, and whatever Remote Config has already fetched right now — the
+highest `catalogVersion` for the same `gameId` wins, and it is cached for the next cold start. It never
+regresses and never blocks: if Remote Config has nothing yet, the bundled manifest is used as normal.
+Call `UnityAchievementManager.Instance.RefreshCatalogFromRemoteConfig()` after your project's Remote
+Config fetch completes to hot-swap in a newer catalog without restarting the game (unlock/pending state
+carries over unaffected — this is the same mechanism that already lets an older save load into a larger,
+newer catalog). There is currently no automated way in this repo to push a value into Remote Config via
+its Admin REST API — Unity's docs for that API are behind several redirects to a "legacy services" page
+without a stable, verifiable endpoint spec, so this intentionally is not implemented; paste the value in
+the dashboard, or write your own push script against Unity's current Remote Config Admin API docs.
 
 ### 4. Add packaged icons
 
 Put sprites at `Assets/Resources/<prefix><icon>`, e.g. with prefix `Achievements/`:
 `Assets/Resources/Achievements/my-game/first_blood.png` (the manifest's `icon` has no extension).
-Unlike localization tables, this path matters: `Resources.Load` resolves it literally.
+Unlike localization tables, this path matters: `Resources.Load` resolves it literally. Icons are always
+loaded from packaged Resources, never from Remote Config or the network, even when 3b is used.
 
 ### 4b. Add translations (optional)
 
@@ -144,7 +171,7 @@ the manifest text for that field.
 `Packages/manifest.json`:
 
 ```json
-"com.DryreLHub.SupabaseGameAchievements": "https://github.com/DryreL/SupabaseGameAchievements.git"
+"com.dryrelhub.supabasegameachievements": "https://github.com/DryreL/Unity-SupabaseGameAchievements.git"
 ```
 
 or a git URL with `?path=/sdk/achievements`. Import the **Example Integration** sample from the
@@ -156,7 +183,7 @@ Package Manager for a starting point.
 using DryreLHub.SupabaseGameAchievements;
 using DryreLHub.SupabaseGameAchievements.Unity;
 
-var identity = new ExternalIdentitySessionSource(   // from the sample
+var identity = new ExternalIdentitySessionSource(
     "https://PROJECT.supabase.co/functions/v1/patreon-middleware?action=supabase-session",
     supabasePublishableKey,
     UnityAchievementManager.Transport,
@@ -229,7 +256,7 @@ the thread pool (inline on WebGL). Nothing blocks a frame on I/O except a rare a
 
 ## Tests
 
-Window → General → Test Runner. The package is test-enabled via `"testables": ["com.DryreLHub.SupabaseGameAchievements"]`
+Window → General → Test Runner. The package is test-enabled via `"testables": ["com.dryrelhub.supabasegameachievements"]`
 in the project manifest. EditMode runs the core suite, PlayMode the overlay suite.
 
 

@@ -22,8 +22,14 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
     [DisallowMultipleComponent]
     public sealed class UnityAchievementManager : MonoBehaviour
     {
-        [Tooltip("Achievement manifest exported from the backend (scripts/export-achievement-catalog.mjs).")]
+        [Tooltip("Achievement manifest exported from the backend (scripts/export-achievement-catalog.mjs). Always required as the offline fallback, even when Remote Config below is also set.")]
         [SerializeField] private TextAsset _catalogJson;
+
+        [Header("Remote Config (optional)")]
+        [Tooltip("Remote Config key holding an updated manifest JSON (same shape as the bundled file). " +
+            "Leave empty to use only the bundled manifest above. Read only from whatever Remote Config already " +
+            "has fetched — this never starts a fetch itself; something else in the project must already do that.")]
+        [SerializeField] private string _remoteConfigKey = "";
 
         [Header("Backend (leave empty for local-only achievements)")]
         [SerializeField] private string _supabaseUrl = "";
@@ -47,6 +53,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private IAchievementNotificationSettingsProvider _settings;
         private UnityAchievementLogger _logger;
         private NetworkReachability _reachability;
+        private RemoteConfigAchievementCatalogSource _remoteConfigSource;
+        private IAchievementAuthProvider _lastAuth;
+        private IAchievementLocalizationProvider _lastLocalization;
 
         public static UnityAchievementManager Instance { get; private set; }
 
@@ -61,6 +70,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         public sealed class Config
         {
             public TextAsset CatalogJson;
+            public string RemoteConfigKey = "";
             public string SupabaseUrl = "";
             public string SupabasePublishableKey = "";
             public bool EnableOverlay = true;
@@ -86,6 +96,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             go.SetActive(false); // configure before Awake
             var host = go.AddComponent<UnityAchievementManager>();
             host._catalogJson = config.CatalogJson;
+            host._remoteConfigKey = config.RemoteConfigKey;
             host._supabaseUrl = config.SupabaseUrl;
             host._supabasePublishableKey = config.SupabasePublishableKey;
             host._enableOverlay = config.EnableOverlay;
@@ -139,6 +150,54 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 _logger.Error("Achievements disabled: " + e.Message);
                 return;
             }
+
+            if (!string.IsNullOrEmpty(_remoteConfigKey))
+            {
+                try
+                {
+                    _remoteConfigSource = new RemoteConfigAchievementCatalogSource(
+                        _remoteConfigKey,
+                        Path.Combine(Application.persistentDataPath, "achievements", catalog.GameSlug, "remote-catalog.json"),
+                        _logger);
+                    catalog = _remoteConfigSource.ResolveBest(catalog);
+                }
+                catch (Exception e)
+                {
+                    _logger.Warning("Remote Config achievement catalog check failed; using the bundled manifest. " + e.Message);
+                }
+            }
+
+            InitializeWithCatalog(catalog, auth, localization);
+        }
+
+        /// <summary>
+        /// Re-checks Remote Config for a newer achievement catalog and hot-swaps it in if found. Call this
+        /// once your project's own Remote Config fetch completes (see
+        /// <see cref="RemoteConfigAchievementCatalogSource"/>). Local unlock/pending state carries over
+        /// unaffected. No-op if Remote Config was not configured or the system has not started yet. Never
+        /// blocks and never throws.
+        /// </summary>
+        public void RefreshCatalogFromRemoteConfig()
+        {
+            if (_remoteConfigSource == null || _system == null) return;
+            try
+            {
+                if (_remoteConfigSource.TryRefresh(_system.Catalog, out var refreshed))
+                {
+                    _logger.Info("Applying updated achievement catalog from Remote Config (v" + refreshed.CatalogVersion + ").");
+                    InitializeWithCatalog(refreshed, _lastAuth, _lastLocalization);
+                }
+            }
+            catch (Exception e)
+            {
+                _logger.Error("Failed to apply Remote Config achievement catalog: " + e);
+            }
+        }
+
+        private void InitializeWithCatalog(AchievementCatalog catalog, IAchievementAuthProvider auth, IAchievementLocalizationProvider localization)
+        {
+            _lastAuth = auth;
+            _lastLocalization = localization;
 
             try
             {

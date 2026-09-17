@@ -4,12 +4,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
-namespace DryreLHub.SupabaseGameAchievements.Samples
+namespace DryreLHub.SupabaseGameAchievements
 {
     /// <summary>
     /// Turns a token from the game's existing sign-in system into a Supabase session by POSTing it to a
     /// server endpoint that verifies it and mints the session (for example the <c>supabase-session</c>
-    /// action of an Edge Function). The achievement core never sees the identity provider.
+    /// action of an Edge Function). The achievement core never sees the identity provider itself (Patreon,
+    /// Steam, a custom account system, ...) - only these two delegates.
     /// </summary>
     public sealed class ExternalIdentitySessionSource : ISupabaseSessionSource
     {

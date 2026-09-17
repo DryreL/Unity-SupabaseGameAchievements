@@ -3,6 +3,7 @@
     "rootNamespace": "DryreLHub.SupabaseGameAchievements.Tests",
     "references": [
         "DryreLHub.SupabaseGameAchievements",
+        "DryreLHub.SupabaseGameAchievements.Unity",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
