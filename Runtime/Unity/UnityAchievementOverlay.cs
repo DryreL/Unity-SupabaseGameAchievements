@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
@@ -9,61 +10,78 @@ using UnityEngine.UI;
 namespace DryreLHub.SupabaseGameAchievements.Unity
 {
     /// <summary>
-    /// Generates a reusable 9-sliced procedural rounded-rectangle sprite with anti-aliasing.
+    /// Generates a procedural rounded-rectangle sprite with anti-aliasing and a diagonal gradient.
     /// </summary>
     internal static class RoundedBoxSprite
     {
-        private static Sprite _cached14;
+        private static Sprite _cachedGradientBg;
 
-        public static Sprite GetOrCreate(int radius = 14)
+        public static Sprite GetOrCreateGradient(int width = 440, int height = 108, int radius = 14)
         {
-            if (radius == 14 && _cached14 != null) return _cached14;
+            if (_cachedGradientBg != null) return _cachedGradientBg;
 
-            int size = radius * 2 + 4;
-            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            var texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
             {
-                name = "AchievementToastRoundedBox",
+                name = "AchievementToastGradientBg",
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp
             };
 
-            var pixels = new Color32[size * size];
+            var pixels = new Color32[width * height];
 
-            for (int y = 0; y < size; y++)
+            // Start color: top-left (#14121D -> RGB: 20, 18, 29, 255)
+            Color32 startColor = new Color32(20, 18, 29, 255);
+            // End color: bottom-right (darker shade -> RGB: 10, 9, 15, 255)
+            Color32 endColor = new Color32(10, 9, 15, 255);
+
+            float boxHalfW = width * 0.5f;
+            float boxHalfH = height * 0.5f;
+            float innerW = boxHalfW - radius;
+            float innerH = boxHalfH - radius;
+
+            for (int y = 0; y < height; y++)
             {
-                for (int x = 0; x < size; x++)
+                // In Texture2D: y=0 is bottom, y=height-1 is top
+                float normY = 1f - ((float)y / (height - 1)); // 0 at top, 1 at bottom
+                float py = Mathf.Abs((y + 0.5f) - boxHalfH) - innerH;
+                float dy = Mathf.Max(0f, py);
+
+                for (int x = 0; x < width; x++)
                 {
-                    // Find the nearest corner center
-                    int cx = x < radius ? radius : (x >= size - radius ? size - 1 - radius : x);
-                    int cy = y < radius ? radius : (y >= size - radius ? size - 1 - radius : y);
+                    float normX = (float)x / (width - 1); // 0 at left, 1 at right
 
-                    float dx = x - cx;
-                    float dy = y - cy;
+                    // Diagonal gradient factor from top-left (0) to bottom-right (1)
+                    float diagT = Mathf.Clamp01((normX + normY) * 0.5f);
+
+                    byte r = (byte)Mathf.RoundToInt(Mathf.Lerp(startColor.r, endColor.r, diagT));
+                    byte g = (byte)Mathf.RoundToInt(Mathf.Lerp(startColor.g, endColor.g, diagT));
+                    byte b = (byte)Mathf.RoundToInt(Mathf.Lerp(startColor.b, endColor.b, diagT));
+
+                    // Signed distance field for rounded corner mask
+                    float px = Mathf.Abs((x + 0.5f) - boxHalfW) - innerW;
+                    float dx = Mathf.Max(0f, px);
                     float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                    float signedDist = dist - radius;
 
-                    // 1px anti-aliased soft edge
-                    float alpha = Mathf.Clamp01(radius + 0.5f - dist);
-                    byte a = (byte)(alpha * 255f);
+                    float alpha = Mathf.Clamp01(0.5f - signedDist);
+                    byte a = (byte)Mathf.RoundToInt(alpha * 255f);
 
-                    pixels[y * size + x] = new Color32(255, 255, 255, a);
+                    pixels[y * width + x] = new Color32(r, g, b, a);
                 }
             }
 
             texture.SetPixels32(pixels);
             texture.Apply(false, true);
 
-            var border = new Vector4(radius, radius, radius, radius);
-            var sprite = Sprite.Create(texture, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, border);
-            sprite.name = "AchievementToastRoundedBox_" + radius;
-
-            if (radius == 14) _cached14 = sprite;
+            var sprite = Sprite.Create(texture, new Rect(0, 0, width, height), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect);
+            sprite.name = "AchievementToastGradientBg";
+            _cachedGradientBg = sprite;
             return sprite;
         }
     }
 
     /// <summary>
-    /// Visual for one toast. The default implementation builds a simple uGUI panel in code; subclass it
-    /// (e.g. for TextMeshPro or a designed prefab) and assign the prefab to <see cref="UnityAchievementOverlay"/>.
+    /// Visual for one toast.
     /// </summary>
     public class AchievementToastView : MonoBehaviour
     {
@@ -105,7 +123,6 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             if (_description != null) _description.text = description;
         }
 
-        /// <summary>Swaps in a resolved icon after showing a fallback first (e.g. once a network download completes).</summary>
         public virtual void SetIcon(Sprite icon)
         {
             if (_icon == null) return;
@@ -113,18 +130,12 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             _icon.enabled = icon != null;
         }
 
-        /// <summary>
-        /// 0 = hidden, tucked below the bottom edge of the screen; 1 = fully shown at its resting position
-        /// (see <see cref="SetMargin"/>). Slides straight up on enter and straight back down on exit, sized
-        /// off the panel's own <see cref="RectTransform.rect"/> height so this works for any prefab, not just
-        /// the built-in default.
-        /// </summary>
         public virtual void SetVisibility(float visibility)
         {
             if (_canvasGroup != null) _canvasGroup.alpha = visibility;
             if (_panel != null)
             {
-                float hiddenDrop = _panel.rect.height + 24f; // fully below the screen edge, plus a small buffer
+                float hiddenDrop = _panel.rect.height + 24f;
                 _panel.anchoredPosition = _restingPosition + new Vector2(0f, -(1f - visibility) * hiddenDrop);
             }
         }
@@ -135,7 +146,6 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             if (_panel != null) _panel.anchoredPosition = _restingPosition;
         }
 
-        /// <summary>Builds the default bottom-right toast. Used when no prefab is assigned.</summary>
         public static AchievementToastView CreateDefault(Transform parent, int sortingOrder, Font customFont = null, Color? accentColor = null, int cornerRadius = 14)
         {
             var root = new GameObject("AchievementToast", typeof(RectTransform));
@@ -147,39 +157,36 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920, 1080);
             scaler.matchWidthOrHeight = 0.5f;
-            // No GraphicRaycaster: the toast must never swallow gameplay input.
 
             var view = root.AddComponent<AchievementToastView>();
             var font = customFont != null ? customFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             if (font != null)
             {
-                // Broad system font fallback supporting Cyrillic, Turkish, Latin, and CJK
                 font.fontNames = new string[]
                 {
                     font.name,
-                    "Segoe UI",              // Windows default (Cyrillic, Turkish, Latin)
-                    "Arial",                 // Universal cross-platform
-                    "Tahoma",                // Broad Unicode coverage
+                    "Segoe UI",
+                    "Arial",
+                    "Tahoma",
                     "Verdana",
-                    "Microsoft YaHei",       // Windows Chinese
-                    "SimSun",                // Windows Chinese fallback
-                    "PingFang SC",           // macOS Chinese
-                    "Heiti SC",              // macOS Chinese
-                    "Helvetica Neue",        // macOS Latin
-                    "Noto Sans CJK SC",      // Android / Linux Chinese
-                    "Noto Sans",             // Android / Linux Latin/Cyrillic
-                    "Roboto",                // Android default
-                    "Droid Sans Fallback"    // Android fallback
+                    "Microsoft YaHei",
+                    "SimSun",
+                    "PingFang SC",
+                    "Heiti SC",
+                    "Helvetica Neue",
+                    "Noto Sans CJK SC",
+                    "Noto Sans",
+                    "Roboto",
+                    "Droid Sans Fallback"
                 };
             }
 
-            // Panel: 440 x 108, anchored to bottom-right
             view._panel = CreateRect("Panel", root.transform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(1, 0), new Vector2(440, 108));
             var background = view._panel.gameObject.AddComponent<Image>();
-            background.sprite = RoundedBoxSprite.GetOrCreate(cornerRadius);
-            background.type = Image.Type.Sliced;
-            // Background color matches target (#14121D, RGB: 20, 18, 29) with 100% opacity
-            background.color = new Color32(20, 18, 29, 255);
+            // Procedural gradient: starts at #14121D at top-left and smoothly darkens toward bottom-right, 100% opacity
+            background.sprite = RoundedBoxSprite.GetOrCreateGradient(440, 108, cornerRadius);
+            background.type = Image.Type.Simple;
+            background.color = Color.white;
             background.raycastTarget = false;
             view._canvasGroup = view._panel.gameObject.AddComponent<CanvasGroup>();
             view._canvasGroup.interactable = false;
@@ -187,7 +194,6 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
             Color effectiveAccentColor = accentColor ?? Color.white;
 
-            // Accent bar on right edge: collapsed (width 0, inactive) by default, kept in hierarchy
             var accent = CreateRect("Accent", view._panel, new Vector2(1, 0), new Vector2(1, 1), new Vector2(1, 0.5f), Vector2.zero);
             var accentImage = accent.gameObject.AddComponent<Image>();
             accentImage.color = effectiveAccentColor;
@@ -195,15 +201,12 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             accent.gameObject.SetActive(false);
             view._accent = accent;
 
-            // Icon: 72x72, left aligned at x=20, vertically centered
             var icon = CreateRect("Icon", view._panel, new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(72, 72));
             icon.anchoredPosition = new Vector2(20, 0);
             view._icon = icon.gameObject.AddComponent<Image>();
             view._icon.preserveAspect = true;
             view._icon.raycastTarget = false;
 
-            // Text components with BestFit enabled and strict bounds to guarantee text never overflows
-            // Available text width: 440 - 108 (left) - 16 (right margin) = 316
             view._header = CreateText("Header", view._panel, font, 12, 9, FontStyle.Bold, effectiveAccentColor, 108, 12, 316, 16);
             view._title = CreateText("Title", view._panel, font, 18, 12, FontStyle.Bold, Color.white, 108, 30, 316, 27);
             view._description = CreateText("Description", view._panel, font, 14, 10, FontStyle.Normal, new Color(0.82f, 0.82f, 0.88f), 108, 58, 316, 42);
@@ -254,15 +257,13 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
     }
 
     /// <summary>
-    /// Shows queued achievement notifications one at a time in the bottom-right corner:
-    /// fade/slide in, hold, fade/slide out. A single view instance is reused for every toast, the sound
-    /// plays once per toast, and animation uses unscaled time so it works while the game is paused.
+    /// Shows queued achievement notifications in the bottom-right corner.
     /// </summary>
     public sealed class UnityAchievementOverlay : MonoBehaviour
     {
         private enum Phase { Idle, WaitingForText, Enter, Hold, Exit }
 
-        private static readonly Dictionary<string, string> FallbackHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        private static readonly Dictionary<string, string> GameLanguageHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             { "en", "ACHIEVEMENT UNLOCKED" },
             { "tr", "BAŞARIM AÇILDI" },
@@ -287,7 +288,6 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [SerializeField] private float _enterDuration = 0.25f;
         [SerializeField] private float _holdDuration = 4.5f;
         [SerializeField] private float _exitDuration = 0.5f;
-        [Tooltip("How long to wait for localized text before showing fallback text.")]
         [SerializeField] private float _localizationGrace = 0.2f;
 
         [Header("Audio")]
@@ -296,6 +296,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
         private AchievementNotificationService _service;
         private IAchievementIconProvider _icons;
+        private IAchievementLocalizationProvider _localization;
         private AchievementToastView _view;
         private AudioSource _audio;
         private AchievementNotification _current;
@@ -307,13 +308,10 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
         public bool IsShowing => _phase != Phase.Idle;
 
-        /// <summary>Number of toasts shown since startup (diagnostics/tests).</summary>
         public int ShownCount { get; private set; }
 
-        /// <summary>Number of times the unlock sound was started (diagnostics/tests).</summary>
         public int SoundPlayCount { get; private set; }
 
-        /// <summary>The reused toast view, or null before the first toast.</summary>
         public AchievementToastView View => _view;
 
         public Font CustomFont
@@ -366,8 +364,14 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
         public void Bind(AchievementNotificationService service, IAchievementIconProvider icons)
         {
+            Bind(service, icons, null);
+        }
+
+        public void Bind(AchievementNotificationService service, IAchievementIconProvider icons, IAchievementLocalizationProvider localization)
+        {
             _service = service;
             _icons = icons ?? new ResourcesAchievementIconProvider();
+            _localization = localization;
         }
 
         private void Update()
@@ -409,7 +413,6 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         {
             if (!_service.Queue.TryDequeue(out var next)) return;
 
-            // The launcher setting may have changed while the toast waited in the queue.
             _service.Settings.Refresh();
             if (!_service.Settings.NotificationsEnabled) return;
 
@@ -437,7 +440,10 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             }
 
             string localizedHeader = ResolveLocalizedHeader();
-            _view.SetContent(localizedHeader, _current.Title, _current.Description, icon);
+            string localizedTitle = ResolveTitle(_current);
+            string localizedDesc = ResolveDescription(_current);
+
+            _view.SetContent(localizedHeader, localizedTitle, localizedDesc, icon);
             _view.SetVisibility(0f);
             _view.gameObject.SetActive(true);
             ShownCount++;
@@ -459,7 +465,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private void Finish()
         {
             _view.SetVisibility(0f);
-            _view.gameObject.SetActive(false); // kept for reuse
+            _view.gameObject.SetActive(false);
             _current = null;
             SetPhase(Phase.Idle);
         }
@@ -469,7 +475,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             int version = _current.TextVersion;
             if (version == _textVersion) return;
             _textVersion = version;
-            _view.SetText(_current.Title, _current.Description);
+            _view.SetText(ResolveTitle(_current), ResolveDescription(_current));
         }
 
         private void RefreshIconIfReady()
@@ -508,27 +514,134 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             _phaseTime = 0f;
         }
 
+        private string ResolveTitle(AchievementNotification notification)
+        {
+            if (notification?.Definition != null && notification.Definition.HasLocalization)
+            {
+                string loc = TryLookupLocalizedString(notification.Definition.LocalizationTable, notification.Definition.TitleKey);
+                if (IsValidTranslation(loc)) return loc;
+            }
+            return notification != null ? notification.Title : string.Empty;
+        }
+
+        private string ResolveDescription(AchievementNotification notification)
+        {
+            if (notification?.Definition != null && notification.Definition.HasLocalization)
+            {
+                string loc = TryLookupLocalizedString(notification.Definition.LocalizationTable, notification.Definition.DescriptionKey);
+                if (IsValidTranslation(loc)) return loc;
+            }
+            return notification != null ? notification.Description : string.Empty;
+        }
+
         private string ResolveLocalizedHeader()
         {
-            // 1. Attempt lookup via Unity Localization StringDatabase
+            // 1. Try resolving header directly from StringDatabase in game language
             if (!string.IsNullOrEmpty(_headerLocalizationTable) && !string.IsNullOrEmpty(_headerLocalizationKey))
             {
                 string text = TryLookupLocalizedString(_headerLocalizationTable, _headerLocalizationKey);
-                if (!string.IsNullOrEmpty(text)) return text;
+                if (IsValidTranslation(text)) return text;
             }
 
-            // 2. Fall back to supported system language if active language has no translation
-            string sysCode = GetSupportedLanguageCode(Application.systemLanguage);
-            if (FallbackHeaders.TryGetValue(sysCode, out var sysHeader))
+            // 2. Strict fallback based on OYUN DİLİ (Game Language)
+            string gameLanguage = GetGameLanguageCode();
+            if (GameLanguageHeaders.TryGetValue(gameLanguage, out var header))
             {
-                return sysHeader;
+                return header;
             }
 
-            // 3. Fall back to inspector default
+            // 3. Fallback to inspector default
             return !string.IsNullOrEmpty(_headerText) ? _headerText : "ACHIEVEMENT UNLOCKED";
         }
 
+        public static string GetGameLanguageCode()
+        {
+            try
+            {
+                var locType = Type.GetType("UnityEngine.Localization.Settings.LocalizationSettings, Unity.Localization");
+                if (locType != null)
+                {
+                    var prop = locType.GetProperty("SelectedLocale", BindingFlags.Public | BindingFlags.Static);
+                    var locale = prop?.GetValue(null);
+                    if (locale != null)
+                    {
+                        var idProp = locale.GetType().GetProperty("Identifier");
+                        var id = idProp?.GetValue(locale);
+                        if (id != null)
+                        {
+                            var codeProp = id.GetType().GetProperty("Code");
+                            string code = codeProp?.GetValue(id) as string;
+                            if (!string.IsNullOrEmpty(code))
+                            {
+                                int dash = code.IndexOf('-');
+                                if (dash > 0) code = code.Substring(0, dash);
+                                return code.ToLowerInvariant();
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (PlayerPrefs.HasKey("OptionPicker_Language"))
+                {
+                    int idx = PlayerPrefs.GetInt("OptionPicker_Language", 0);
+                    var locType = Type.GetType("UnityEngine.Localization.Settings.LocalizationSettings, Unity.Localization");
+                    if (locType != null)
+                    {
+                        var availProp = locType.GetProperty("AvailableLocales", BindingFlags.Public | BindingFlags.Static);
+                        var avail = availProp?.GetValue(null);
+                        if (avail != null)
+                        {
+                            var localesProp = avail.GetType().GetProperty("Locales");
+                            var locales = localesProp?.GetValue(avail) as IList;
+                            if (locales != null && idx >= 0 && idx < locales.Count)
+                            {
+                                var loc = locales[idx];
+                                var idProp = loc?.GetType().GetProperty("Identifier");
+                                var id = idProp?.GetValue(loc);
+                                var codeProp = id?.GetType().GetProperty("Code");
+                                string code = codeProp?.GetValue(id) as string;
+                                if (!string.IsNullOrEmpty(code))
+                                {
+                                    int dash = code.IndexOf('-');
+                                    if (dash > 0) code = code.Substring(0, dash);
+                                    return code.ToLowerInvariant();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return "en";
+        }
+
         private static string TryLookupLocalizedString(string table, string key)
+        {
+            if (string.IsNullOrEmpty(table) || string.IsNullOrEmpty(key)) return null;
+
+            string res = DirectLookup(table, key);
+            if (IsValidTranslation(res)) return res;
+
+            if (!table.StartsWith("ST_", StringComparison.OrdinalIgnoreCase))
+            {
+                res = DirectLookup("ST_" + table, key);
+                if (IsValidTranslation(res)) return res;
+            }
+            else if (table.StartsWith("ST_", StringComparison.OrdinalIgnoreCase))
+            {
+                res = DirectLookup(table.Substring(3), key);
+                if (IsValidTranslation(res)) return res;
+            }
+
+            return null;
+        }
+
+        private static string DirectLookup(string table, string key)
         {
             try
             {
@@ -539,34 +652,65 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 var db = dbProp?.GetValue(null);
                 if (db == null) return null;
 
-                var method = db.GetType().GetMethod("GetLocalizedString", new Type[] { typeof(string), typeof(string) });
-                if (method != null)
+                var methods = db.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance);
+                foreach (var m in methods)
                 {
-                    var result = method.Invoke(db, new object[] { table, key }) as string;
-                    if (!string.IsNullOrEmpty(result)) return result;
+                    if (m.Name != "GetLocalizedString") continue;
+                    var pars = m.GetParameters();
+                    if (pars.Length >= 2)
+                    {
+                        object p0 = WrapTableReference(pars[0].ParameterType, table);
+                        object p1 = WrapTableEntryReference(pars[1].ParameterType, key);
+                        if (p0 == null || p1 == null) continue;
+
+                        var args = new object[pars.Length];
+                        args[0] = p0;
+                        args[1] = p1;
+                        for (int i = 2; i < pars.Length; i++)
+                        {
+                            if (pars[i].ParameterType.IsArray)
+                                args[i] = Array.CreateInstance(pars[i].ParameterType.GetElementType(), 0);
+                            else if (pars[i].DefaultValue != DBNull.Value)
+                                args[i] = pars[i].DefaultValue;
+                            else
+                                args[i] = null;
+                        }
+
+                        var result = m.Invoke(db, args) as string;
+                        if (IsValidTranslation(result))
+                        {
+                            return result;
+                        }
+                    }
                 }
             }
             catch { }
             return null;
         }
 
-        private static string GetSupportedLanguageCode(SystemLanguage lang)
+        private static object WrapTableReference(Type targetType, string name)
         {
-            switch (lang)
-            {
-                case SystemLanguage.Turkish: return "tr";
-                case SystemLanguage.Spanish: return "es";
-                case SystemLanguage.French: return "fr";
-                case SystemLanguage.Russian: return "ru";
-                case SystemLanguage.English: return "en";
-                default: return "en"; // If system language is unsupported, fallback to English
-            }
+            if (targetType == typeof(string)) return name;
+            var op = targetType.GetMethod("op_Implicit", new[] { typeof(string) });
+            return op != null ? op.Invoke(null, new object[] { name }) : null;
+        }
+
+        private static object WrapTableEntryReference(Type targetType, string key)
+        {
+            if (targetType == typeof(string)) return key;
+            var op = targetType.GetMethod("op_Implicit", new[] { typeof(string) });
+            return op != null ? op.Invoke(null, new object[] { key }) : null;
+        }
+
+        private static bool IsValidTranslation(string text)
+        {
+            return !string.IsNullOrEmpty(text) && !text.StartsWith("No translation found for");
         }
 
         private static float Ease(float t)
         {
             t = Mathf.Clamp01(t);
-            return 1f - (1f - t) * (1f - t) * (1f - t); // ease-out cubic
+            return 1f - (1f - t) * (1f - t) * (1f - t);
         }
     }
 }
