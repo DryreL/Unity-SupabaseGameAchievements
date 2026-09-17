@@ -2,7 +2,8 @@
     "name": "DryreLHub.SupabaseGameAchievements.Editor",
     "rootNamespace": "DryreLHub.SupabaseGameAchievements.Editor",
     "references": [
-        "DryreLHub.SupabaseGameAchievements"
+        "DryreLHub.SupabaseGameAchievements",
+        "DryreLHub.SupabaseGameAchievements.Unity"
     ],
     "includePlatforms": [
         "Editor"

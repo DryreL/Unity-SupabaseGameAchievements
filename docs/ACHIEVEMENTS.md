@@ -285,9 +285,25 @@ Unlocking never waits for localization.
 
 ## 8. Icons
 
-- **In game:** packaged assets, loaded with `Resources.Load<Sprite>(prefix + icon)` once per
-  achievement and cached, including misses. Missing icon → fallback sprite or no icon; the toast
-  still shows. No network.
+- **In game, packaged (the normal case):** loaded with `Resources.Load<Sprite>(prefix + icon)` once
+  per achievement and cached, including misses. No network, instant, offline-safe.
+- **In game, hosted (dual support):** if `icon_path` in Supabase is a full URL (`http://`, `https://`,
+  or `www.`), both exporters keep the extension (only a local path has it stripped) and
+  `ResourcesAchievementIconProvider` downloads it at runtime instead of using `Resources.Load`. Chosen
+  per achievement by the value's shape, so one catalog can mix packaged and hosted icons freely. The
+  unlock and the toast never wait for it: the toast shows immediately with a fallback icon, and the
+  downloaded one swaps in once ready (`IAchievementIconProvider.GetIcon` returns `isFinal = false` and
+  `GetIconAsync` resolves the final sprite — the same upgrade-in-place pattern as localized text).
+- **Fallback chain**, used whenever an icon cannot be loaded or downloaded (missing file, bad path,
+  failed download, or an achievement added later via Remote Config with no matching packaged art —
+  never a blank gap):
+  1. The sprite passed to `ResourcesAchievementIconProvider`'s constructor /
+     `UnityAchievementManager.Config.FallbackIcon`, if set.
+  2. A `fallback` sprite in the same `Resources` folder as the achievement's own icon (e.g.
+     `Achievements/my-game/fallback.png` for an icon at `my-game/first_blood`) — loaded once per
+     folder and cached; a load failure here also falls through instead of throwing.
+  3. `DefaultAchievementIcon.GetOrCreate()` — a plain circular badge generated in code (not a shipped
+     asset), so there is always a sane default with zero setup.
 - **Web/profile:** `achievement-assets/<game-slug>/<key>.webp` in Supabase Storage;
   `achievements.icon_path = '<game-slug>/<key>.webp'`. The exporter strips the extension for the
   manifest, so the game's resource path is `Resources/<prefix><game-slug>/<key>`.

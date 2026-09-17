@@ -1,4 +1,6 @@
-﻿using UnityEngine;
+﻿using System.Threading;
+using System.Threading.Tasks;
+using UnityEngine;
 using UnityEngine.UI;
 
 namespace DryreLHub.SupabaseGameAchievements.Unity
@@ -42,6 +44,14 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         {
             if (_title != null) _title.text = title;
             if (_description != null) _description.text = description;
+        }
+
+        /// <summary>Swaps in a resolved icon after showing a fallback first (e.g. once a network download completes).</summary>
+        public virtual void SetIcon(Sprite icon)
+        {
+            if (_icon == null) return;
+            _icon.sprite = icon;
+            _icon.enabled = icon != null;
         }
 
         /// <summary>
@@ -173,6 +183,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private Phase _phase;
         private float _phaseTime;
         private int _textVersion;
+        private bool _iconFinal = true;
+        private Task<Sprite> _pendingIconTask;
 
         public bool IsShowing => _phase != Phase.Idle;
 
@@ -222,12 +234,14 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 case Phase.Enter:
                     _phaseTime += dt;
                     RefreshTextIfChanged();
+                    RefreshIconIfReady();
                     _view.SetVisibility(Ease(_enterDuration <= 0f ? 1f : _phaseTime / _enterDuration));
                     if (_phaseTime >= _enterDuration) SetPhase(Phase.Hold);
                     break;
                 case Phase.Hold:
                     _phaseTime += dt;
                     RefreshTextIfChanged();
+                    RefreshIconIfReady();
                     if (_phaseTime >= _holdDuration) SetPhase(Phase.Exit);
                     break;
                 case Phase.Exit:
@@ -256,13 +270,17 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             EnsureView();
             _textVersion = _current.TextVersion;
             Sprite icon = null;
+            _iconFinal = true;
+            _pendingIconTask = null;
             try
             {
-                icon = _icons.GetIcon(_current.Definition);
+                icon = _icons.GetIcon(_current.Definition, out _iconFinal);
+                if (!_iconFinal) _pendingIconTask = _icons.GetIconAsync(_current.Definition, CancellationToken.None);
             }
             catch (System.Exception e)
             {
                 Debug.LogException(e);
+                _iconFinal = true;
             }
 
             _view.SetContent(_headerText, _current.Title, _current.Description, icon);
@@ -298,6 +316,21 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             if (version == _textVersion) return;
             _textVersion = version;
             _view.SetText(_current.Title, _current.Description);
+        }
+
+        private void RefreshIconIfReady()
+        {
+            if (_iconFinal || _pendingIconTask == null || !_pendingIconTask.IsCompleted) return;
+            _iconFinal = true;
+            try
+            {
+                _view.SetIcon(_pendingIconTask.Result);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogException(e); // GetIconAsync itself never throws; a faulted task would be a bug worth surfacing
+            }
+            _pendingIconTask = null;
         }
 
         private void EnsureView()

@@ -217,62 +217,236 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
     /// <summary>Loads achievement icons packaged with the game.</summary>
     public interface IAchievementIconProvider
     {
-        /// <summary>Returns the icon, or null if missing. Must be fast and offline.</summary>
-        Sprite GetIcon(AchievementDefinition definition);
+        /// <summary>
+        /// Returns the best icon available right now, without waiting: packaged art, a previously
+        /// cached network download, or a fallback. Must be fast and must never block on the network.
+        /// Sets <paramref name="isFinal"/> to false when a better icon may still be on the way (a
+        /// network fetch just started) — the caller can then also await <see cref="GetIconAsync"/> and
+        /// swap the result in once it resolves, the same way achievement text is upgraded once
+        /// localization finishes.
+        /// </summary>
+        Sprite GetIcon(AchievementDefinition definition, out bool isFinal);
+
+        /// <summary>
+        /// Resolves the definitive icon, awaiting a network fetch if one is in flight. Never throws: a
+        /// failed fetch resolves to the same fallback <see cref="GetIcon"/> is already showing.
+        /// </summary>
+        Task<Sprite> GetIconAsync(AchievementDefinition definition, CancellationToken cancellationToken);
     }
 
     /// <summary>
-    /// Loads <c>Resources/&lt;prefix&gt;&lt;IconPath&gt;</c> once per achievement and caches the result
-    /// (including failures). Never returns null: a missing or unloadable icon falls back to
-    /// <paramref name="fallback"/> passed to the constructor, or <see cref="DefaultAchievementIcon"/> if
-    /// none was given. This matters for an old, already-shipped build showing an achievement it did not
-    /// ship art for (e.g. one added later purely through a Remote Config catalog update) — it still shows a
-    /// clearly-intentional placeholder rather than a blank gap.
+    /// Resolves one achievement's icon from packaged <c>Resources</c>, or downloads it when
+    /// <c>IconPath</c> is a full URL — dual support, chosen per achievement by the value's shape, so a
+    /// catalog can mix packaged art and hosted art freely. Never returns null and never leaves a blank
+    /// gap: a missing or unloadable icon falls back, in order, to (1) the <c>fallback</c> sprite passed to
+    /// the constructor, (2) a <c>fallback</c> sprite sitting next to the other icons in the same
+    /// <c>Resources</c> folder (e.g. <c>Achievements/hellasure/fallback.png</c> for an achievement whose
+    /// icon is <c>hellasure/lava_walker</c>), (3) <see cref="DefaultAchievementIcon"/>. This matters for an
+    /// old, already-shipped build showing an achievement it did not ship art for (e.g. one added later
+    /// purely through a Remote Config catalog update) — it still shows a clearly-intentional placeholder
+    /// rather than a blank gap.
     /// </summary>
     public sealed class ResourcesAchievementIconProvider : IAchievementIconProvider
     {
+        private sealed class IconEntry
+        {
+            public Sprite Sprite;
+            public bool IsFinal;
+            public Task<Sprite> PendingDownload;
+        }
+
         private readonly string _prefix;
         private readonly Sprite _fallback;
-        private readonly Dictionary<long, Sprite> _cache = new Dictionary<long, Sprite>();
+        private readonly Func<string, Sprite> _localLoader;
+        private readonly Func<string, Task<Sprite>> _urlDownloader;
+        private readonly Dictionary<long, IconEntry> _cache = new Dictionary<long, IconEntry>();
+        private readonly Dictionary<string, Sprite> _gameFallbackCache = new Dictionary<string, Sprite>();
+        private readonly Dictionary<string, Task<Sprite>> _urlDownloads = new Dictionary<string, Task<Sprite>>();
 
-        /// <param name="fallback">Used for any icon that cannot be loaded. Null uses <see cref="DefaultAchievementIcon"/>.</param>
-        public ResourcesAchievementIconProvider(string pathPrefix = "", Sprite fallback = null)
+        /// <param name="fallback">Tried first for any icon that cannot be loaded. Null moves straight to the per-game "fallback" convention, then <see cref="DefaultAchievementIcon"/>.</param>
+        /// <param name="localLoader">Loads a local Resources path. Defaults to <see cref="Resources.Load{T}(string)"/>; overridable for testing.</param>
+        /// <param name="urlDownloader">Downloads an icon from a URL. Defaults to a real network fetch via <c>UnityWebRequestTexture</c>; overridable for testing.</param>
+        public ResourcesAchievementIconProvider(
+            string pathPrefix = "",
+            Sprite fallback = null,
+            Func<string, Sprite> localLoader = null,
+            Func<string, Task<Sprite>> urlDownloader = null)
         {
             _prefix = pathPrefix ?? string.Empty;
             _fallback = fallback;
+            _localLoader = localLoader ?? Resources.Load<Sprite>;
+            _urlDownloader = urlDownloader ?? DownloadSpriteAsync;
         }
 
-        public Sprite GetIcon(AchievementDefinition definition)
+        public Sprite GetIcon(AchievementDefinition definition, out bool isFinal)
         {
-            if (definition == null) return Fallback();
-            if (_cache.TryGetValue(definition.Id, out var cached)) return cached;
+            isFinal = true;
+            if (definition == null) return ResolveFallback(null);
 
-            Sprite sprite = null;
-            try
+            if (_cache.TryGetValue(definition.Id, out var cached))
             {
-                if (definition.IconPath != null)
-                {
-                    string path = _prefix + System.IO.Path.ChangeExtension(definition.IconPath, null);
-                    sprite = Resources.Load<Sprite>(path);
-                    if (sprite == null)
-                        Debug.LogWarning("[Achievements] Missing icon '" + path + "' for achievement '" + definition.Key +
-                            "' (showing the fallback icon instead). Expected if this achievement was added after this " +
-                            "build shipped, e.g. through a Remote Config catalog update, without matching packaged art.");
-                }
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning("[Achievements] Failed to load the icon for achievement '" + definition.Key + "': " + e.Message +
-                    " (showing the fallback icon instead).");
-                sprite = null;
+                isFinal = cached.IsFinal;
+                return cached.Sprite;
             }
 
-            sprite = sprite != null ? sprite : Fallback();
-            _cache[definition.Id] = sprite;
+            string iconPath = definition.IconPath;
+            if (iconPath != null && TryNormalizeUrl(iconPath, out string url))
+            {
+                var download = GetOrStartUrlDownload(url);
+                var placeholder = ResolveFallback(definition);
+                _cache[definition.Id] = new IconEntry { Sprite = placeholder, IsFinal = false, PendingDownload = download };
+                isFinal = false;
+                return placeholder;
+            }
+
+            Sprite sprite = LoadLocal(definition, iconPath);
+            sprite = sprite != null ? sprite : ResolveFallback(definition);
+            _cache[definition.Id] = new IconEntry { Sprite = sprite, IsFinal = true };
             return sprite;
         }
 
-        private Sprite Fallback() => _fallback != null ? _fallback : DefaultAchievementIcon.GetOrCreate();
+        public async Task<Sprite> GetIconAsync(AchievementDefinition definition, CancellationToken cancellationToken)
+        {
+            if (definition == null) return ResolveFallback(null);
+
+            var sprite = GetIcon(definition, out bool isFinal);
+            if (isFinal) return sprite;
+
+            // Downloads are shared/cached by URL (GetOrStartUrlDownload) and never throw (failures resolve
+            // to null), so this simply awaits whichever request is already in flight for this icon.
+            Task<Sprite> download = _cache.TryGetValue(definition.Id, out var entry) ? entry.PendingDownload : null;
+            Sprite downloaded = download != null ? await download : null;
+
+            var resolved = downloaded != null ? downloaded : ResolveFallback(definition);
+            _cache[definition.Id] = new IconEntry { Sprite = resolved, IsFinal = true };
+            return resolved;
+        }
+
+        private Sprite LoadLocal(AchievementDefinition definition, string iconPath)
+        {
+            if (iconPath == null) return null;
+            try
+            {
+                string path = _prefix + System.IO.Path.ChangeExtension(iconPath, null);
+                var sprite = _localLoader(path);
+                if (sprite == null)
+                    Debug.LogWarning("[Achievements] Missing icon '" + path + "' for achievement '" + definition.Key +
+                        "' (showing the fallback icon instead). Expected if this achievement was added after this " +
+                        "build shipped, e.g. through a Remote Config catalog update, without matching packaged art.");
+                return sprite;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[Achievements] Failed to load the icon for achievement '" + definition.Key + "': " + e.Message +
+                    " (showing the fallback icon instead).");
+                return null;
+            }
+        }
+
+        private Sprite ResolveFallback(AchievementDefinition definition)
+        {
+            if (_fallback != null) return _fallback;
+
+            string gameFallbackPath = GameFallbackResourcePath(definition);
+            if (gameFallbackPath != null)
+            {
+                if (!_gameFallbackCache.TryGetValue(gameFallbackPath, out var gameFallback))
+                {
+                    try
+                    {
+                        gameFallback = _localLoader(gameFallbackPath);
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[Achievements] Failed to load the per-game fallback icon '" + gameFallbackPath + "': " + e.Message);
+                        gameFallback = null;
+                    }
+                    _gameFallbackCache[gameFallbackPath] = gameFallback;
+                }
+                if (gameFallback != null) return gameFallback;
+            }
+
+            return DefaultAchievementIcon.GetOrCreate();
+        }
+
+        /// <summary>
+        /// <c>&lt;prefix&gt;&lt;same folder as the achievement's own icon&gt;fallback</c> — e.g. an icon at
+        /// <c>hellasure/lava_walker</c> looks for <c>&lt;prefix&gt;hellasure/fallback</c>. A remote-URL icon
+        /// or an achievement with no icon path at all has no folder to derive this from and returns null.
+        /// </summary>
+        private string GameFallbackResourcePath(AchievementDefinition definition)
+        {
+            string iconPath = definition?.IconPath;
+            if (string.IsNullOrEmpty(iconPath) || TryNormalizeUrl(iconPath, out _)) return null;
+            int slash = iconPath.LastIndexOf('/');
+            string directory = slash >= 0 ? iconPath.Substring(0, slash + 1) : string.Empty;
+            return _prefix + directory + "fallback";
+        }
+
+        private static bool TryNormalizeUrl(string iconPath, out string url)
+        {
+            if (iconPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || iconPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                url = iconPath;
+                return true;
+            }
+            if (iconPath.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
+            {
+                url = "https://" + iconPath;
+                return true;
+            }
+            url = null;
+            return false;
+        }
+
+        private Task<Sprite> GetOrStartUrlDownload(string url)
+        {
+            if (_urlDownloads.TryGetValue(url, out var existing)) return existing;
+            var download = _urlDownloader(url);
+            _urlDownloads[url] = download;
+            return download;
+        }
+
+        private static Task<Sprite> DownloadSpriteAsync(string url)
+        {
+            var completion = new TaskCompletionSource<Sprite>();
+            try
+            {
+                var request = UnityWebRequestTexture.GetTexture(url);
+                request.SendWebRequest().completed += _ =>
+                {
+                    try
+                    {
+                        if (request.result == UnityWebRequest.Result.Success)
+                        {
+                            var texture = DownloadHandlerTexture.GetContent(request);
+                            var sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
+                            completion.TrySetResult(sprite);
+                        }
+                        else
+                        {
+                            Debug.LogWarning("[Achievements] Failed to download icon '" + url + "': " + request.error);
+                            completion.TrySetResult(null);
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[Achievements] Failed to decode downloaded icon '" + url + "': " + e.Message);
+                        completion.TrySetResult(null);
+                    }
+                    finally
+                    {
+                        request.Dispose();
+                    }
+                };
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[Achievements] Could not start icon download '" + url + "': " + e.Message);
+                completion.TrySetResult(null);
+            }
+            return completion.Task;
+        }
     }
 }
 

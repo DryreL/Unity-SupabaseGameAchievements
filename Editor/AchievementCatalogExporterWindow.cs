@@ -314,7 +314,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 };
 
                 string iconPath = row.Value<string>("icon_path");
-                if (!string.IsNullOrEmpty(iconPath)) entry["icon"] = StripExtension(iconPath);
+                if (!string.IsNullOrEmpty(iconPath))
+                {
+                    // A full URL (http/https/www) is downloaded at runtime instead of loaded from packaged
+                    // Resources, so its extension must be kept; only a local Resources-relative path has
+                    // its extension stripped (Resources.Load takes no extension).
+                    entry["icon"] = IsRemoteUrl(iconPath) ? iconPath : StripExtension(iconPath);
+                }
                 if (row.Value<bool?>("hidden") == true) entry["hidden"] = true;
                 if (row.Value<bool?>("is_retired") == true) entry["retired"] = true;
                 int displayOrder = row.Value<int?>("display_order") ?? 0;
@@ -350,6 +356,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             int slash = Math.Max(path.LastIndexOf('/'), path.LastIndexOf('\\'));
             return dot > slash ? path.Substring(0, dot) : path;
         }
+
+        private static bool IsRemoteUrl(string path) =>
+            path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("www.", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

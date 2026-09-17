@@ -158,21 +158,37 @@ its Admin REST API — Unity's docs for that API are behind several redirects to
 without a stable, verifiable endpoint spec, so this intentionally is not implemented; paste the value in
 the dashboard, or write your own push script against Unity's current Remote Config Admin API docs.
 
-### 4. Add packaged icons
+### 4. Add packaged icons (or link to hosted ones)
 
-Put sprites at `Assets/Resources/<prefix><icon>`, e.g. with prefix `Achievements/`:
-`Assets/Resources/Achievements/my-game/first_blood.png` (the manifest's `icon` has no extension).
-Unlike localization tables, this path matters: `Resources.Load` resolves it literally. Icons are always
-loaded from packaged Resources, never from Remote Config or the network, even when 3b is used.
+**Packaged (the normal case).** Put sprites at `Assets/Resources/<prefix><icon>`, e.g. with prefix
+`Achievements/`: `Assets/Resources/Achievements/my-game/first_blood.png` (the manifest's `icon` has no
+extension). Unlike localization tables, this path matters: `Resources.Load` resolves it literally. This
+is always offline-safe and instant — no network, ever.
 
-**Missing icon (e.g. an old build + an achievement added later via Remote Config).** An already-shipped
-build has no way to have packaged art for an achievement that did not exist yet when it was built. When
-`ResourcesAchievementIconProvider` cannot load an icon — missing file, bad path, anything — it never
-leaves a blank gap; it shows a fallback instead, in this order: your own fallback sprite if you set
-`UnityAchievementManager.Config.FallbackIcon` (or passed one to the provider's constructor), otherwise
-`DefaultAchievementIcon.GetOrCreate()` — a plain generated placeholder badge shipped with the package so
-there is always a sane default with zero setup. Give it your own fallback sprite once you have real art
-for it; the generated one is intentionally plain.
+**Hosted (dual support).** Set `icon_path` in Supabase to a full URL instead of a local path — anything
+starting with `http://`, `https://`, or `www.` — and `ResourcesAchievementIconProvider` downloads it at
+runtime instead of loading it from Resources. Mix and match freely: some achievements packaged, others
+hosted, in the same catalog. This is the one place in the whole system that touches the network for
+something other than sync: use it for icons you want to be able to swap without a new build (paired
+with 3b's Remote Config catalog override, for example), not as the default — a hosted icon needs a live
+network the first time it is shown, while a packaged one never does. The unlock and the toast itself
+never wait for it: the toast appears immediately with a fallback icon and the real one fades in once the
+download finishes (the same way localized text upgrades in place — see step 4b).
+
+**Missing or unloadable icon (packaged file not found, or hosted download failed).** An already-shipped
+build also has no way to have packaged art for an achievement that did not exist yet when it was built
+(e.g. one added later purely through a Remote Config catalog update, step 3b). Either way,
+`ResourcesAchievementIconProvider` never leaves a blank gap — it falls back, in order:
+
+1. The sprite you set on `UnityAchievementManager.Config.FallbackIcon` (or passed to the provider's
+   constructor), if any.
+2. A `fallback` sprite sitting next to the achievement's own icon in the same `Resources` folder — e.g.
+   `Assets/Resources/Achievements/my-game/fallback.png` for an icon at `my-game/first_blood`. Add one
+   per game folder and every missing/broken icon in that game quietly uses it, no code required.
+3. `DefaultAchievementIcon.GetOrCreate()` — a plain generated placeholder badge shipped with the package
+   (not a file - built in code) so there is always a sane default even with zero setup.
+
+Add real art at whichever tier matters to you; the ones below it stay as later safety nets.
 
 ### 4b. Add translations (optional)
 

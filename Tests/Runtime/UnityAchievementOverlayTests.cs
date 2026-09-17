@@ -16,7 +16,13 @@ namespace DryreLHub.SupabaseGameAchievements.Unity.Tests
     {
         private sealed class NullIcons : IAchievementIconProvider
         {
-            public Sprite GetIcon(AchievementDefinition definition) => null;
+            public Sprite GetIcon(AchievementDefinition definition, out bool isFinal)
+            {
+                isFinal = true;
+                return null;
+            }
+
+            public Task<Sprite> GetIconAsync(AchievementDefinition definition, CancellationToken cancellationToken) => Task.FromResult<Sprite>(null);
         }
 
         private sealed class PendingLocalization : IAchievementLocalizationProvider
