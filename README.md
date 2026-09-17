@@ -339,6 +339,7 @@ All under **Tools → DryreL Hub → Supabase Game Achievements**:
 
 | Menu item | What it does |
 |---|---|
+| Import Achievement Catalog | Parses an achievements.json manifest and imports it to Supabase via REST API (needs a service key) or generates an idempotent SQL script. |
 | Export Achievement Catalog | Pulls one game's catalog from Supabase and writes the manifest JSON (see step 3a). |
 | Manage Achievements | Retires or (with confirmation, only if already retired and never unlocked) permanently deletes an achievement. Needs a service/secret key. |
 | Achievement Debug Window | Play Mode only. Lists every achievement in the running game with an Unlock button, plus Sync Now / Reconcile From Server, with live pending/unlocked counts - a quick way to exercise `AchievementManager` without writing test code. |
