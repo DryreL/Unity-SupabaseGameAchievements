@@ -1,10 +1,63 @@
-﻿using System.Threading;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace DryreLHub.SupabaseGameAchievements.Unity
 {
+    /// <summary>
+    /// Generates a reusable 9-sliced procedural rounded-rectangle sprite with anti-aliasing.
+    /// </summary>
+    internal static class RoundedBoxSprite
+    {
+        private static Sprite _cached14;
+
+        public static Sprite GetOrCreate(int radius = 14)
+        {
+            if (radius == 14 && _cached14 != null) return _cached14;
+
+            int size = radius * 2 + 4;
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                name = "AchievementToastRoundedBox",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+
+            var pixels = new Color32[size * size];
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    // Find the nearest corner center
+                    int cx = x < radius ? radius : (x >= size - radius ? size - 1 - radius : x);
+                    int cy = y < radius ? radius : (y >= size - radius ? size - 1 - radius : y);
+
+                    float dx = x - cx;
+                    float dy = y - cy;
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy);
+
+                    // 1px anti-aliased soft edge
+                    float alpha = Mathf.Clamp01(radius + 0.5f - dist);
+                    byte a = (byte)(alpha * 255f);
+
+                    pixels[y * size + x] = new Color32(255, 255, 255, a);
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply(false, true);
+
+            var border = new Vector4(radius, radius, radius, radius);
+            var sprite = Sprite.Create(texture, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, border);
+            sprite.name = "AchievementToastRoundedBox_" + radius;
+
+            if (radius == 14) _cached14 = sprite;
+            return sprite;
+        }
+    }
+
     /// <summary>
     /// Visual for one toast. The default implementation builds a simple uGUI panel in code; subclass it
     /// (e.g. for TextMeshPro or a designed prefab) and assign the prefab to <see cref="UnityAchievementOverlay"/>.
@@ -13,6 +66,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
     {
         [SerializeField] private RectTransform _panel;
         [SerializeField] private CanvasGroup _canvasGroup;
+        [SerializeField] private RectTransform _accent;
         [SerializeField] private Image _icon;
         [SerializeField] private Text _header;
         [SerializeField] private Text _title;
@@ -39,6 +93,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         public bool HasIcon => _icon != null && _icon.enabled;
 
         public Sprite Icon => _icon != null ? _icon.sprite : null;
+
+        public RectTransform Accent => _accent;
 
         public virtual void SetText(string title, string description)
         {
@@ -77,7 +133,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         }
 
         /// <summary>Builds the default bottom-right toast. Used when no prefab is assigned.</summary>
-        public static AchievementToastView CreateDefault(Transform parent, int sortingOrder)
+        public static AchievementToastView CreateDefault(Transform parent, int sortingOrder, Font customFont = null, Color? accentColor = null, int cornerRadius = 14)
         {
             var root = new GameObject("AchievementToast", typeof(RectTransform));
             root.transform.SetParent(parent, false);
@@ -91,20 +147,43 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             // No GraphicRaycaster: the toast must never swallow gameplay input.
 
             var view = root.AddComponent<AchievementToastView>();
-            var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            var font = customFont != null ? customFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            if (font != null)
+            {
+                // Fallback font names for CJK (Chinese, Japanese, Korean) and Cyrillic (Russian)
+                font.fontNames = new string[]
+                {
+                    font.name,
+                    "Arial",
+                    "Segoe UI",
+                    "Microsoft YaHei",       // Windows Chinese
+                    "SimSun",                // Windows Chinese fallback
+                    "PingFang SC",           // macOS Chinese
+                    "Heiti SC",              // macOS Chinese
+                    "Noto Sans CJK SC",      // Android / Linux Chinese
+                    "Droid Sans Fallback"    // Android fallback
+                };
+            }
 
             view._panel = CreateRect("Panel", root.transform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(1, 0), new Vector2(440, 104));
             var background = view._panel.gameObject.AddComponent<Image>();
-            background.color = new Color(0f, 0f, 0f, 0.8f);
+            background.sprite = RoundedBoxSprite.GetOrCreate(cornerRadius);
+            background.type = Image.Type.Sliced;
+            background.color = new Color(0f, 0f, 0f, 0.95f);
             background.raycastTarget = false;
             view._canvasGroup = view._panel.gameObject.AddComponent<CanvasGroup>();
             view._canvasGroup.interactable = false;
             view._canvasGroup.blocksRaycasts = false;
 
-            var accent = CreateRect("Accent", view._panel, new Vector2(1, 0), new Vector2(1, 1), new Vector2(1, 0.5f), new Vector2(4, 0));
+            Color effectiveAccentColor = accentColor ?? Color.white;
+
+            // Accent bar on right edge: collapsed (width 0, inactive) by default, kept in hierarchy
+            var accent = CreateRect("Accent", view._panel, new Vector2(1, 0), new Vector2(1, 1), new Vector2(1, 0.5f), Vector2.zero);
             var accentImage = accent.gameObject.AddComponent<Image>();
-            accentImage.color = new Color(0.91f, 0.23f, 0.44f, 1f);
+            accentImage.color = effectiveAccentColor;
             accentImage.raycastTarget = false;
+            accent.gameObject.SetActive(false); // Collapsed (not deleted)
+            view._accent = accent;
 
             var icon = CreateRect("Icon", view._panel, new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(72, 72));
             icon.anchoredPosition = new Vector2(20, 0);
@@ -112,11 +191,11 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             view._icon.preserveAspect = true;
             view._icon.raycastTarget = false;
 
-            view._header = CreateText("Header", view._panel, font, 13, FontStyle.Bold, new Color(0.91f, 0.23f, 0.44f), 14);
+            view._header = CreateText("Header", view._panel, font, 13, FontStyle.Bold, effectiveAccentColor, 14);
             view._title = CreateText("Title", view._panel, font, 20, FontStyle.Bold, Color.white, 34);
             view._description = CreateText("Description", view._panel, font, 15, FontStyle.Normal, new Color(0.79f, 0.78f, 0.84f), 60);
 
-            view.SetMargin(new Vector2(24, 24));
+            view.SetMargin(Vector2.zero);
             view.SetVisibility(0f);
             return view;
         }
@@ -161,8 +240,12 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [Header("Presentation")]
         [SerializeField] private AchievementToastView _toastPrefab;
         [SerializeField] private string _headerText = "ACHIEVEMENT UNLOCKED";
-        [SerializeField] private Vector2 _margin = new Vector2(24, 24);
+        [SerializeField] private Vector2 _margin = Vector2.zero;
         [SerializeField] private int _sortingOrder = 32000;
+        [SerializeField] private Font _customFont;
+        [SerializeField] private Color _accentColor = Color.white;
+        [Range(0, 30)]
+        [SerializeField] private int _cornerRadius = 14;
 
         [Header("Timing (seconds)")]
         [SerializeField] private float _enterDuration = 0.25f;
@@ -196,6 +279,34 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
         /// <summary>The reused toast view, or null before the first toast.</summary>
         public AchievementToastView View => _view;
+
+        public Font CustomFont
+        {
+            get => _customFont;
+            set => _customFont = value;
+        }
+
+        public Color AccentColor
+        {
+            get => _accentColor;
+            set => _accentColor = value;
+        }
+
+        public int CornerRadius
+        {
+            get => _cornerRadius;
+            set => _cornerRadius = Mathf.Max(0, value);
+        }
+
+        public Vector2 Margin
+        {
+            get => _margin;
+            set
+            {
+                _margin = value;
+                if (_view != null) _view.SetMargin(_margin);
+            }
+        }
 
         public void SetTimings(float enter, float hold, float exit, float localizationGrace)
         {
@@ -274,7 +385,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private void Begin()
         {
             EnsureView();
-            _textVersion = _current.TextVersion;
+            _textVersion = _current.TextVersion; 
             Sprite icon = null;
             _iconFinal = true;
             _pendingIconTask = null;
@@ -348,7 +459,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             }
             else
             {
-                _view = AchievementToastView.CreateDefault(transform, _sortingOrder);
+                _view = AchievementToastView.CreateDefault(transform, _sortingOrder, _customFont, _accentColor, _cornerRadius);
             }
             _view.SetMargin(_margin);
             _view.gameObject.SetActive(false);
@@ -367,6 +478,3 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         }
     }
 }
-
-
-
