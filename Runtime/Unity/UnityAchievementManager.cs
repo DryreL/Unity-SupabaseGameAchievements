@@ -228,6 +228,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             try
             {
                 string storageDirectory = Path.Combine(Application.persistentDataPath, "achievements", catalog.GameSlug);
+#if UNITY_IOS
+                UnityEngine.iOS.Device.SetNoBackupFlag(storageDirectory);
+#endif
                 bool hasBackend = !string.IsNullOrEmpty(_supabaseUrl) && !string.IsNullOrEmpty(_supabasePublishableKey);
                 if (!hasBackend && auth != null)
                     _logger.Warning("An auth provider was supplied but no Supabase URL/key is configured; achievements stay local-only.");
