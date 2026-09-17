@@ -160,6 +160,19 @@ added. An `achievement_id` index would only speed up cascades from hard deletes,
 RLS-scoped. Returns nothing for an inactive (unreleased) game, because its catalog is hidden from
 clients. Sync still works for testers.
 
+### Catalog administration (service_role only)
+
+Neither `anon` nor `authenticated` has any write grant on `achievements` — retiring or deleting one
+requires a service/secret key, via two RPCs (`20260918000000_achievement_admin.sql`), also reachable
+from **Tools → DryreL Hub → Supabase Game Achievements → Manage Achievements** in Unity:
+
+- `retire_achievement(p_achievement_id bigint)` — sets `is_retired = true`. Idempotent. This is the
+  normal way to remove an achievement from play; its `bit_index` stays reserved forever.
+- `delete_retired_achievement(p_achievement_id bigint)` — hard delete. Refuses unless the achievement is
+  already retired *and* has zero rows in `user_achievements`, so it can only remove a mistake that never
+  shipped and was never earned, never a real removal or anything a player has. On success it frees the
+  `bit_index` for reuse (the only sanctioned way past `achievements_guard_identity`'s delete guard).
+
 ---
 
 ## 4. Synchronization semantics
@@ -373,7 +386,7 @@ stub; removing the explicit revokes or the game-ownership check makes 15 of them
 
 ## 13. Deployment checklist
 
-1. `supabase db push` (both migrations), then `supabase test db`.
+1. `supabase db push` (all three migrations), then `supabase test db`.
 2. Redeploy `patreon-middleware` (`supabase functions deploy patreon-middleware`).
 3. Edge Function secrets: none required. `IDENTITY_EMAIL_DOMAIN` is optional.
 4. Insert the game and its achievements (see `README.md`), upload web icons.

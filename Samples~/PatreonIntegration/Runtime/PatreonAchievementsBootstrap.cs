@@ -37,9 +37,10 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
             "e.g. \"Achievements/achievements\" for Assets/Resources/Achievements/achievements.json.")]
         [SerializeField] private string _manifestResourcePath = "Achievements/achievements";
 
-        [Tooltip("Unity Remote Config key holding an updated manifest JSON for this game. Leave empty to " +
-            "use only the bundled manifest above.")]
-        [SerializeField] private string _remoteConfigKey = "";
+        [Tooltip("Unity Remote Config key holding an updated manifest JSON for this game. Must match a key " +
+            "you create in the Remote Config dashboard, value type Json or String, value = the exported " +
+            "manifest JSON. Leave empty to use only the bundled manifest above.")]
+        [SerializeField] private string _remoteConfigKey = "achievement_catalog";
 
         [Tooltip("How often (seconds) to re-check Remote Config for a newer catalog. This is a cheap, " +
             "synchronous, in-memory check (see RemoteConfigAchievementCatalogSource) - it never starts a " +

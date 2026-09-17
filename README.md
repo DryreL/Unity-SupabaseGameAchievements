@@ -73,7 +73,12 @@ Rules that keep old installs correct (the database enforces the first three):
 
 - `achievement_key`, `id` and `bit_index` never change.
 - New achievements take the **next unused** `bit_index`. Never reuse one, not even from a retired achievement.
-- Don't delete achievements. Retire them: `update achievements set is_retired = true where ...`.
+- Don't delete achievements. Retire them: `update achievements set is_retired = true where ...`, or use
+  **Tools → DryreL Hub → Supabase Game Achievements → Manage Achievements** (needs a Supabase
+  service/secret key - a publishable key cannot retire or delete, on purpose). That window can also
+  permanently delete an achievement, but only if it is already retired and no player has ever unlocked
+  it (the server enforces both, regardless of what the window sends) - that path exists for a mistake
+  that never shipped, not for real removals.
 - Keys: lowercase `a-z 0-9 _ . -`, up to 64 characters. Bit indexes: 0–4095.
 - Edits to titles/descriptions are fine; they bump `games.catalog_version` automatically.
 
@@ -115,16 +120,23 @@ for the launcher and web profiles only. Games use packaged icons.
 Two ways to ship a manifest, and they combine: the bundled file is always required as the offline
 fallback; Remote Config (if you use it) can only override it, never replace it.
 
-**3a. Bundled file (always do this one).**
+**3a. Bundled file (always do this one).** Two ways to produce it - same output either way:
 
-```bash
-node scripts/export-achievement-catalog.mjs my-game ../MyGame/Assets/Achievements/achievements.json
-```
+- **In the Unity Editor:** **Tools → DryreL Hub → Supabase Game Achievements → Export Achievement
+  Catalog**. Supabase URL/publishable key auto-fill from `Resources/PatreonConfig.asset` if present
+  (button to redo it manually otherwise); type the game slug and pick an output path (suggested:
+  `Assets/Resources/Achievements/achievements.json`, matching `PatreonAchievementsBootstrap`'s default
+  load path) and click Export. For an inactive (`is_active = false`) game, put a secret/service key in
+  the Export Key field for just that one export - it is never saved to disk.
+- **From a script/CI**, e.g. the launcher repo:
+  ```bash
+  node scripts/export-achievement-catalog.mjs my-game ../MyGame/Assets/Achievements/achievements.json
+  ```
+  Uses `SUPABASE_PUBLISHABLE_KEY` from `.env`; `SUPABASE_EXPORT_KEY` in the shell for an inactive game.
 
-(From the launcher repo. Uses `SUPABASE_PUBLISHABLE_KEY` from `.env`. For an inactive game set
-`SUPABASE_EXPORT_KEY` to a secret key in your shell. Never commit that key or ship it.) Re-run whenever
-the catalog changes and commit the JSON. The output is deterministic, so an unchanged catalog produces
-no diff. Assign it to `UnityAchievementManager`'s `Catalog Json` field (or `Config.CatalogJson`).
+Either way: re-run whenever the catalog changes and commit the JSON (output is deterministic, so an
+unchanged catalog produces no diff). Assign it to `UnityAchievementManager`'s `Catalog Json` field (or
+`Config.CatalogJson`) if you are not relying on the Manifest Resource Path fallback.
 
 **3b. Remote Config override (optional).** Lets you push a title/description/new-achievement update
 without a new build, on top of Unity Remote Config already configured in your project (this package
@@ -304,6 +316,18 @@ If you want a *different* animation (e.g. fade only, or scale in), override `Set
 yourself — `visibility` is driven every frame from 0 (hidden) to 1 (fully shown) and back, on
 `Time.unscaledDeltaTime` (works while the game is paused). Sound and queuing stay exactly the same
 either way; those live on `UnityAchievementOverlay`, not on the view.
+
+## Editor tools
+
+All under **Tools → DryreL Hub → Supabase Game Achievements**:
+
+| Menu item | What it does |
+|---|---|
+| Export Achievement Catalog | Pulls one game's catalog from Supabase and writes the manifest JSON (see step 3a). |
+| Manage Achievements | Retires or (with confirmation, only if already retired and never unlocked) permanently deletes an achievement. Needs a service/secret key. |
+| Achievement Debug Window | Play Mode only. Lists every achievement in the running game with an Unlock button, plus Sync Now / Reconcile From Server, with live pending/unlocked counts - a quick way to exercise `AchievementManager` without writing test code. |
+
+The Patreon sample adds one more once imported: **Setup Achievements (Patreon) In Scene** (see step 6).
 
 ## Threading
 

@@ -13,7 +13,7 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon.Editor
     /// </summary>
     internal static class PatreonAchievementsBootstrapMenu
     {
-        [MenuItem("Tools/DryreL Hub/Setup Achievements (Patreon) In Scene", priority = 100)]
+        [MenuItem("Tools/DryreL Hub/Supabase Game Achievements/Setup Achievements (Patreon) In Scene", priority = 100)]
         private static void SetupInScene()
         {
             var existing = Object.FindFirstObjectByType<PatreonAchievementsBootstrap>(FindObjectsInactive.Include);
@@ -37,7 +37,7 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon.Editor
                 "OK");
         }
 
-        [MenuItem("Tools/DryreL Hub/Setup Achievements (Patreon) In Scene", true)]
+        [MenuItem("Tools/DryreL Hub/Supabase Game Achievements/Setup Achievements (Patreon) In Scene", true)]
         private static bool ValidateSetupInScene() => !EditorApplication.isPlayingOrWillChangePlaymode;
     }
 }

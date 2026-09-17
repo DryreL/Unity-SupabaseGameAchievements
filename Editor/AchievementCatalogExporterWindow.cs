@@ -40,7 +40,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private MessageType _statusType = MessageType.None;
         private bool _isBusy;
 
-        [MenuItem("Tools/DryreL Hub/Export Achievement Catalog")]
+        [MenuItem("Tools/DryreL Hub/Supabase Game Achievements/Export Achievement Catalog")]
         private static void Open()
         {
             var window = GetWindow<AchievementCatalogExporterWindow>(true, "Export Achievement Catalog");
