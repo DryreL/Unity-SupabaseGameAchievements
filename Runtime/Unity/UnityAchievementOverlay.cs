@@ -146,7 +146,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             if (_panel != null) _panel.anchoredPosition = _restingPosition;
         }
 
-        public static AchievementToastView CreateDefault(Transform parent, int sortingOrder, Font customFont = null, Color? accentColor = null, int cornerRadius = 14)
+        public static AchievementToastView CreateDefault(Transform parent, int sortingOrder, Font customFont = null, Color? accentColor = null, int cornerRadius = 14, int headerFontSize = 16, int titleFontSize = 24, int descriptionFontSize = 18)
         {
             var root = new GameObject("AchievementToast", typeof(RectTransform));
             root.transform.SetParent(parent, false);
@@ -188,6 +188,10 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             background.type = Image.Type.Simple;
             background.color = Color.white;
             background.raycastTarget = false;
+            var shadow = view._panel.gameObject.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.72f);
+            shadow.effectDistance = new Vector2(0f, -8f);
+            shadow.useGraphicAlpha = true;
             view._canvasGroup = view._panel.gameObject.AddComponent<CanvasGroup>();
             view._canvasGroup.interactable = false;
             view._canvasGroup.blocksRaycasts = false;
@@ -207,9 +211,12 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             view._icon.preserveAspect = true;
             view._icon.raycastTarget = false;
 
-            view._header = CreateText("Header", view._panel, font, 12, 9, FontStyle.Bold, effectiveAccentColor, 108, 12, 316, 16);
-            view._title = CreateText("Title", view._panel, font, 18, 12, FontStyle.Bold, Color.white, 108, 30, 316, 27);
-            view._description = CreateText("Description", view._panel, font, 14, 10, FontStyle.Normal, new Color(0.82f, 0.82f, 0.88f), 108, 58, 316, 42);
+            int safeHeaderFontSize = Mathf.Max(1, headerFontSize);
+            int safeTitleFontSize = Mathf.Max(1, titleFontSize);
+            int safeDescriptionFontSize = Mathf.Max(1, descriptionFontSize);
+            view._header = CreateText("Header", view._panel, font, safeHeaderFontSize, Mathf.Max(1, safeHeaderFontSize - 3), FontStyle.Bold, effectiveAccentColor, 108, 10, 316, 20);
+            view._title = CreateText("Title", view._panel, font, safeTitleFontSize, Mathf.Max(1, safeTitleFontSize - 6), FontStyle.Bold, Color.white, 108, 30, 316, 32);
+            view._description = CreateText("Description", view._panel, font, safeDescriptionFontSize, Mathf.Max(1, safeDescriptionFontSize - 4), FontStyle.Normal, new Color(0.82f, 0.82f, 0.88f), 108, 64, 316, 36);
 
             view.SetMargin(Vector2.zero);
             view.SetVisibility(0f);
@@ -281,6 +288,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [SerializeField] private int _sortingOrder = 32000;
         [SerializeField] private Font _customFont;
         [SerializeField] private Color _accentColor = Color.white;
+        [SerializeField] private int _headerFontSize = 16;
+        [SerializeField] private int _titleFontSize = 24;
+        [SerializeField] private int _descriptionFontSize = 18;
         [Range(0, 30)]
         [SerializeField] private int _cornerRadius = 14;
 
@@ -324,6 +334,24 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         {
             get => _accentColor;
             set => _accentColor = value;
+        }
+
+        public int HeaderFontSize
+        {
+            get => _headerFontSize;
+            set => _headerFontSize = Mathf.Max(1, value);
+        }
+
+        public int TitleFontSize
+        {
+            get => _titleFontSize;
+            set => _titleFontSize = Mathf.Max(1, value);
+        }
+
+        public int DescriptionFontSize
+        {
+            get => _descriptionFontSize;
+            set => _descriptionFontSize = Mathf.Max(1, value);
         }
 
         public int CornerRadius
@@ -502,7 +530,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             }
             else
             {
-                _view = AchievementToastView.CreateDefault(transform, _sortingOrder, _customFont, _accentColor, _cornerRadius);
+                _view = AchievementToastView.CreateDefault(transform, _sortingOrder, _customFont, _accentColor, _cornerRadius, _headerFontSize, _titleFontSize, _descriptionFontSize);
             }
             _view.SetMargin(_margin);
             _view.gameObject.SetActive(false);
