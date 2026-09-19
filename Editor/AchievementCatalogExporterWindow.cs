@@ -226,7 +226,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             SetStatus("Fetching achievements...", MessageType.Info);
             string key = string.IsNullOrEmpty(_exportKey) ? _supabasePublishableKey : _exportKey;
             string url = _supabaseUrl.TrimEnd('/') + "/rest/v1/achievements?game_id=eq." + gameId +
-                "&select=id,achievement_key,bit_index,title,description,icon_path,hidden,is_retired,display_order,localization_table,title_key,description_key" +
+                "&select=id,achievement_key,bit_index,title,description,icon_path,icon_url,hidden,is_retired,display_order,localization_table,title_key,description_key" +
                 "&order=bit_index.asc";
             Send(url, key, request2 => OnAchievementsResponse(request2, gameId, slug, catalogVersion));
         }
@@ -320,6 +320,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     // Resources, so its extension must be kept; only a local Resources-relative path has
                     // its extension stripped (Resources.Load takes no extension).
                     entry["icon"] = IsRemoteUrl(iconPath) ? iconPath : StripExtension(iconPath);
+                }
+                string iconUrl = row.Value<string>("icon_url");
+                if (!string.IsNullOrEmpty(iconUrl))
+                {
+                    // icon_url is always a remote URL — keep verbatim, no extension stripping.
+                    entry["iconUrl"] = iconUrl;
                 }
                 if (row.Value<bool?>("hidden") == true) entry["hidden"] = true;
                 if (row.Value<bool?>("is_retired") == true) entry["retired"] = true;

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -158,6 +158,7 @@ namespace DryreLHub.SupabaseGameAchievements
                         title: ReadString(item, "title"),
                         description: ReadString(item, "description"),
                         iconPath: ReadString(item, "icon"),
+                        iconUrl: ReadString(item, "iconUrl"),
                         hidden: ReadBool(item, "hidden"),
                         displayOrder: ReadInt(item, "displayOrder", 0),
                         retired: ReadBool(item, "retired"),

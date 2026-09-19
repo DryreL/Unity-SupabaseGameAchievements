@@ -73,6 +73,10 @@ export function buildManifest(game, rows) {
         // extension stripped (Resources.Load takes no extension).
         entry.icon = /^(https?:\/\/|www\.)/i.test(row.icon_path) ? row.icon_path : row.icon_path.replace(/\.[a-z0-9]+$/i, '');
       }
+      // icon_url is always a remote URL — keep it verbatim, no extension stripping.
+      if (row.icon_url) {
+        entry.iconUrl = row.icon_url;
+      }
       if (row.hidden) entry.hidden = true;
       if (row.is_retired) entry.retired = true;
       if (row.display_order) entry.displayOrder = row.display_order;
@@ -117,7 +121,7 @@ async function main() {
   const rows = await get(
     baseUrl,
     key,
-    `achievements?game_id=eq.${games[0].id}&select=id,achievement_key,bit_index,title,description,icon_path,hidden,is_retired,display_order,localization_table,title_key,description_key&order=bit_index.asc`,
+    `achievements?game_id=eq.${games[0].id}&select=id,achievement_key,bit_index,title,description,icon_path,icon_url,hidden,is_retired,display_order,localization_table,title_key,description_key&order=bit_index.asc`,
   );
 
   const manifest = buildManifest(games[0], rows);

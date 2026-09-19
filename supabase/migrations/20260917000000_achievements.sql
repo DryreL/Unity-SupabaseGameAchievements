@@ -59,6 +59,10 @@ create table public.achievements (
   title_key          text        null check (title_key is null or char_length(title_key) between 1 and 200),
   description_key    text        null check (description_key is null or char_length(description_key) between 1 and 200),
   icon_path          text        null check (icon_path is null or char_length(icon_path) between 1 and 500),
+  -- When non-null the client downloads icon_url first; on any failure it falls back to icon_path.
+  -- Priority: icon_url (ok) -> icon_path -> fallback.png -> DefaultIcon (code-generated)
+  icon_url           text        null
+                       check (icon_url is null or char_length(icon_url) between 1 and 2000),
   hidden             boolean     not null default false,
   is_retired         boolean     not null default false,
   display_order      smallint    not null default 0,
@@ -76,6 +80,10 @@ comment on column public.achievements.bit_index is
   'Immutable local bitset position. Append new achievements with new indexes; never reorder or reuse.';
 comment on column public.achievements.is_retired is
   'Retired achievements stay forever (their bit_index is burned) but sync_achievements rejects them.';
+comment on column public.achievements.icon_url is
+  'Optional remote URL for the achievement icon. Client downloads this first; on any failure falls '
+  'back to icon_path. Leave NULL to use icon_path only. '
+  'Priority: icon_url (ok) -> icon_path -> fallback.png -> DefaultIcon (code-generated).';
 
 -- Exactly 1 row per user per game storing unlocked achievement IDs as a BIGINT array.
 create table public.user_achievements (

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -253,6 +253,12 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             public Sprite Sprite;
             public bool IsFinal;
             public Task<Sprite> PendingDownload;
+            /// <summary>
+            /// When set, called after <see cref="PendingDownload"/> resolves to null (download failed)
+            /// to produce the next icon in the fallback chain (e.g. load from icon_path after an
+            /// icon_url failure). Returns null to continue to <see cref="ResourcesAchievementIconProvider.ResolveFallback"/>.
+            /// </summary>
+            public Func<Task<Sprite>> DownloadFailureFallback;
         }
 
         private readonly string _prefix;
@@ -289,10 +295,32 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 return cached.Sprite;
             }
 
-            string iconPath = definition.IconPath;
-            if (iconPath != null && TryNormalizeUrl(iconPath, out string url))
+            // --- Priority 1: icon_url (explicit remote URL column) ---
+            string iconUrl = definition.IconUrl;
+            if (!string.IsNullOrEmpty(iconUrl))
             {
-                var download = GetOrStartUrlDownload(url);
+                // Normalize www. prefix, identical to the icon_path URL path.
+                if (!TryNormalizeUrl(iconUrl, out string normalizedUrl))
+                    normalizedUrl = iconUrl; // already http/https; keep as-is
+                var download = GetOrStartUrlDownload(normalizedUrl);
+                var placeholder = ResolveFallback(definition);
+                // If this download fails we want to retry the icon_path chain as the fallback.
+                _cache[definition.Id] = new IconEntry
+                {
+                    Sprite = placeholder,
+                    IsFinal = false,
+                    PendingDownload = download,
+                    DownloadFailureFallback = () => ResolveIconPathAsync(definition),
+                };
+                isFinal = false;
+                return placeholder;
+            }
+
+            // --- Priority 2: icon_path (local Resources or URL-in-path, existing behaviour) ---
+            string iconPath = definition.IconPath;
+            if (iconPath != null && TryNormalizeUrl(iconPath, out string urlInPath))
+            {
+                var download = GetOrStartUrlDownload(urlInPath);
                 var placeholder = ResolveFallback(definition);
                 _cache[definition.Id] = new IconEntry { Sprite = placeholder, IsFinal = false, PendingDownload = download };
                 isFinal = false;
@@ -312,14 +340,57 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             var sprite = GetIcon(definition, out bool isFinal);
             if (isFinal) return sprite;
 
-            // Downloads are shared/cached by URL (GetOrStartUrlDownload) and never throw (failures resolve
-            // to null), so this simply awaits whichever request is already in flight for this icon.
-            Task<Sprite> download = _cache.TryGetValue(definition.Id, out var entry) ? entry.PendingDownload : null;
-            Sprite downloaded = download != null ? await download : null;
+            // Downloads are shared/cached by URL (GetOrStartUrlDownload) and never throw (failures
+            // resolve to null). Await whichever request is already in flight for this icon.
+            _cache.TryGetValue(definition.Id, out var entry);
+            Sprite downloaded = entry?.PendingDownload != null ? await entry.PendingDownload : null;
 
-            var resolved = downloaded != null ? downloaded : ResolveFallback(definition);
+            if (downloaded != null)
+            {
+                _cache[definition.Id] = new IconEntry { Sprite = downloaded, IsFinal = true };
+                return downloaded;
+            }
+
+            // Download returned null (failed). Run the failure-fallback chain if one was registered
+            // (i.e. icon_url failed → try icon_path), then fall through to ResolveFallback.
+            if (entry?.DownloadFailureFallback != null)
+            {
+                Sprite fallbackSprite = null;
+                try { fallbackSprite = await entry.DownloadFailureFallback(); }
+                catch (Exception e) { Debug.LogWarning("[Achievements] Download failure-fallback threw for '" + definition.Key + "': " + e.Message); }
+
+                if (fallbackSprite != null)
+                {
+                    _cache[definition.Id] = new IconEntry { Sprite = fallbackSprite, IsFinal = true };
+                    return fallbackSprite;
+                }
+            }
+
+            var resolved = ResolveFallback(definition);
             _cache[definition.Id] = new IconEntry { Sprite = resolved, IsFinal = true };
             return resolved;
+        }
+
+        /// <summary>
+        /// Resolves the icon from <see cref="AchievementDefinition.IconPath"/> asynchronously,
+        /// following the same local-load / URL-in-path / ResolveFallback chain as <see cref="GetIcon"/>.
+        /// Used as the <see cref="IconEntry.DownloadFailureFallback"/> when an icon_url download fails.
+        /// Returns null if the path is empty and there is no local file (caller will call ResolveFallback).
+        /// </summary>
+        private async Task<Sprite> ResolveIconPathAsync(AchievementDefinition definition)
+        {
+            string iconPath = definition.IconPath;
+            if (string.IsNullOrEmpty(iconPath)) return null;
+
+            if (TryNormalizeUrl(iconPath, out string url))
+            {
+                // icon_path itself is a URL: download it (shares the _urlDownloads cache).
+                var urlDownload = GetOrStartUrlDownload(url);
+                return await urlDownload;
+            }
+
+            // Local Resources load (synchronous, but wrapped here so the call site is uniform).
+            return LoadLocal(definition, iconPath);
         }
 
         private Sprite LoadLocal(AchievementDefinition definition, string iconPath)
@@ -376,6 +447,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         /// </summary>
         private string GameFallbackResourcePath(AchievementDefinition definition)
         {
+            // Prefer the icon_url's implied folder (not meaningful for remote URLs), so derive
+            // the fallback folder from icon_path which is the local Resources anchor.
             string iconPath = definition?.IconPath;
             if (string.IsNullOrEmpty(iconPath) || TryNormalizeUrl(iconPath, out _)) return null;
             int slash = iconPath.LastIndexOf('/');

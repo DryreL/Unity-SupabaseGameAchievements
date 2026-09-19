@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace DryreLHub.SupabaseGameAchievements
 {
@@ -16,6 +16,7 @@ namespace DryreLHub.SupabaseGameAchievements
             string title,
             string description,
             string iconPath = null,
+            string iconUrl = null,
             bool hidden = false,
             int displayOrder = 0,
             bool retired = false,
@@ -34,6 +35,7 @@ namespace DryreLHub.SupabaseGameAchievements
             Title = title ?? key;
             Description = description ?? string.Empty;
             IconPath = string.IsNullOrEmpty(iconPath) ? null : iconPath;
+            IconUrl = string.IsNullOrEmpty(iconUrl) ? null : iconUrl;
             Hidden = hidden;
             DisplayOrder = displayOrder;
             IsRetired = retired;
@@ -59,6 +61,12 @@ namespace DryreLHub.SupabaseGameAchievements
 
         /// <summary>Engine-specific path of the icon packaged with the game, or null.</summary>
         public string IconPath { get; }
+
+        /// <summary>
+        /// Optional remote URL for the achievement icon. When non-null the runtime downloads this
+        /// URL first; on any failure it transparently falls back to <see cref="IconPath"/>.
+        /// </summary>
+        public string IconUrl { get; }
 
         public bool Hidden { get; }
 

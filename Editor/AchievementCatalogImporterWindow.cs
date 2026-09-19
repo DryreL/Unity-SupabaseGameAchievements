@@ -43,6 +43,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     ["title"] = a.Value<string>("title"),
                     ["description"] = a.Value<string>("description"),
                     ["icon_path"] = a.Value<string>("icon"),
+                    ["icon_url"] = a.Value<string>("iconUrl"),
                     ["display_order"] = a.Value<int?>("displayOrder") ?? 0,
                     ["localization_table"] = loc?.Value<string>("table"),
                     ["title_key"] = loc?.Value<string>("titleKey"),
@@ -81,6 +82,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             sb.AppendLine("  title,");
             sb.AppendLine("  description,");
             sb.AppendLine("  icon_path,");
+            sb.AppendLine("  icon_url,");
             sb.AppendLine("  display_order,");
             sb.AppendLine("  localization_table,");
             sb.AppendLine("  title_key,");
@@ -99,19 +101,21 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 string title = a.Value<string>("title");
                 string description = a.Value<string>("description");
                 string icon = a.Value<string>("icon");
+                string iconUrl = a.Value<string>("iconUrl");
                 int displayOrder = a.Value<int?>("displayOrder") ?? 0;
                 string table = loc?.Value<string>("table");
                 string titleKey = loc?.Value<string>("titleKey");
                 string descKey = loc?.Value<string>("descriptionKey");
 
                 string comma = (i < achievements.Count - 1) ? "," : "";
-                sb.AppendLine($"  ({id}, {gameId}, {SqlEscape(key)}, {bitIndex}, {SqlEscape(title)}, {SqlEscape(description)}, {SqlEscape(icon)}, {displayOrder}, {SqlEscape(table)}, {SqlEscape(titleKey)}, {SqlEscape(descKey)}, false, false){comma}");
+                sb.AppendLine($"  ({id}, {gameId}, {SqlEscape(key)}, {bitIndex}, {SqlEscape(title)}, {SqlEscape(description)}, {SqlEscape(icon)}, {SqlEscape(iconUrl)}, {displayOrder}, {SqlEscape(table)}, {SqlEscape(titleKey)}, {SqlEscape(descKey)}, false, false){comma}");
             }
 
             sb.AppendLine("ON CONFLICT (game_id, achievement_key) DO UPDATE SET");
             sb.AppendLine("  title = EXCLUDED.title,");
             sb.AppendLine("  description = EXCLUDED.description,");
             sb.AppendLine("  icon_path = EXCLUDED.icon_path,");
+            sb.AppendLine("  icon_url = EXCLUDED.icon_url,");
             sb.AppendLine("  display_order = EXCLUDED.display_order,");
             sb.AppendLine("  localization_table = EXCLUDED.localization_table,");
             sb.AppendLine("  title_key = EXCLUDED.title_key,");

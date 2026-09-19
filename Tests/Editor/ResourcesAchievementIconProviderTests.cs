@@ -13,6 +13,9 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
         private static AchievementDefinition Definition(long id, string key, string iconPath) =>
             new AchievementDefinition(id, key, (int)id, "Title " + key, "Description " + key, iconPath: iconPath);
 
+        private static AchievementDefinition DefinitionWithUrl(long id, string key, string iconPath, string iconUrl) =>
+            new AchievementDefinition(id, key, (int)id, "Title " + key, "Description " + key, iconPath: iconPath, iconUrl: iconUrl);
+
         private static Sprite MakeSprite(string name)
         {
             var texture = new Texture2D(1, 1);
@@ -228,6 +231,131 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             Sprite icon = null;
             Assert.DoesNotThrow(() => icon = provider.GetIcon(null, out _));
             Assert.AreSame(DefaultAchievementIcon.GetOrCreate(), icon);
+        }
+        // ======================================================================
+        // icon_url tests
+        // ======================================================================
+
+        [Test]
+        public void Icon_url_shows_a_fallback_immediately_and_is_not_final()
+        {
+            var provider = new ResourcesAchievementIconProvider(
+                urlDownloader: _ => new TaskCompletionSource<Sprite>().Task); // never completes
+
+            var icon = provider.GetIcon(DefinitionWithUrl(1, "a", null, "https://cdn.example.com/a.png"), out bool isFinal);
+
+            Assert.IsFalse(isFinal);
+            Assert.AreSame(DefaultAchievementIcon.GetOrCreate(), icon,
+                "icon_url triggers async download; returns fallback immediately without blocking");
+        }
+
+        [Test]
+        public async Task Icon_url_download_success_resolves_to_the_downloaded_sprite()
+        {
+            var downloaded = MakeSprite("from-icon-url");
+            var provider = new ResourcesAchievementIconProvider(
+                urlDownloader: _ => Task.FromResult(downloaded));
+            var definition = DefinitionWithUrl(1, "a", null, "https://cdn.example.com/a.png");
+
+            provider.GetIcon(definition, out _);
+            var resolved = await provider.GetIconAsync(definition, CancellationToken.None);
+
+            Assert.AreSame(downloaded, resolved);
+        }
+
+        [Test]
+        public async Task Icon_url_download_failure_falls_back_to_icon_path_local()
+        {
+            var localSprite = MakeSprite("local-icon-path");
+            var provider = new ResourcesAchievementIconProvider(
+                localLoader: path => path == "hellasure/first_blood" ? localSprite : null,
+                urlDownloader: _ => Task.FromResult<Sprite>(null)); // simulate failure
+            var definition = DefinitionWithUrl(1, "first_blood", "hellasure/first_blood", "https://cdn.example.com/broken.png");
+
+            provider.GetIcon(definition, out _);
+            var resolved = await provider.GetIconAsync(definition, CancellationToken.None);
+
+            Assert.AreSame(localSprite, resolved,
+                "when icon_url download fails the runtime must fall through to icon_path");
+        }
+
+        [Test]
+        public async Task Icon_url_and_icon_path_both_fail_falls_back_to_generated_default()
+        {
+            var provider = new ResourcesAchievementIconProvider(
+                localLoader: _ => null,
+                urlDownloader: _ => Task.FromResult<Sprite>(null));
+            var definition = DefinitionWithUrl(1, "a", "g/a", "https://cdn.example.com/broken.png");
+
+            provider.GetIcon(definition, out _);
+            var resolved = await provider.GetIconAsync(definition, CancellationToken.None);
+
+            Assert.AreSame(DefaultAchievementIcon.GetOrCreate(), resolved);
+        }
+
+        [Test]
+        public void Icon_url_takes_priority_over_icon_path_when_both_are_set()
+        {
+            // GetIcon is sync; when icon_url is set it must be the one that triggers the download,
+            // not icon_path (even though icon_path is also a URL in this case).
+            int downloadCalls = 0;
+            string downloadedUrl = null;
+            var provider = new ResourcesAchievementIconProvider(
+                urlDownloader: url =>
+                {
+                    downloadCalls++;
+                    downloadedUrl = url;
+                    return new TaskCompletionSource<Sprite>().Task;
+                });
+            var definition = DefinitionWithUrl(1, "a",
+                "https://cdn.example.com/path-url.png",
+                "https://cdn.example.com/icon-url.png");
+
+            provider.GetIcon(definition, out bool isFinal);
+
+            Assert.IsFalse(isFinal);
+            Assert.AreEqual(1, downloadCalls, "only one download should start on the first GetIcon call");
+            Assert.AreEqual("https://cdn.example.com/icon-url.png", downloadedUrl,
+                "icon_url must be downloaded, not icon_path");
+        }
+
+        [Test]
+        public async Task Icon_url_failure_with_url_in_icon_path_downloads_icon_path_url_as_fallback()
+        {
+            var pathUrlSprite = MakeSprite("path-url");
+            string lastDownloaded = null;
+            var provider = new ResourcesAchievementIconProvider(
+                urlDownloader: url =>
+                {
+                    lastDownloaded = url;
+                    // First call (icon_url) fails; second call (icon_path URL) succeeds.
+                    return url.Contains("icon-url") ? Task.FromResult<Sprite>(null) : Task.FromResult(pathUrlSprite);
+                });
+            var definition = DefinitionWithUrl(1, "a",
+                "https://cdn.example.com/path-url.png",
+                "https://cdn.example.com/icon-url.png");
+
+            provider.GetIcon(definition, out _);
+            var resolved = await provider.GetIconAsync(definition, CancellationToken.None);
+
+            Assert.AreSame(pathUrlSprite, resolved,
+                "when icon_url fails and icon_path is a URL, that URL should be downloaded as fallback");
+        }
+
+        [Test]
+        public async Task After_icon_url_resolves_later_GetIcon_returns_the_final_sprite_synchronously()
+        {
+            var downloaded = MakeSprite("cached");
+            var provider = new ResourcesAchievementIconProvider(
+                urlDownloader: _ => Task.FromResult(downloaded));
+            var definition = DefinitionWithUrl(1, "a", null, "https://cdn.example.com/a.png");
+
+            provider.GetIcon(definition, out _);
+            await provider.GetIconAsync(definition, CancellationToken.None);
+
+            var icon = provider.GetIcon(definition, out bool isFinal);
+            Assert.AreSame(downloaded, icon);
+            Assert.IsTrue(isFinal);
         }
     }
 }
