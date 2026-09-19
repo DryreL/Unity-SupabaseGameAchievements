@@ -1,4 +1,4 @@
-﻿using DryreLHub.SupabaseGameAchievements;
+using DryreLHub.SupabaseGameAchievements;
 using PixelCrushers.DialogueSystem;
 using UnityEngine;
 
@@ -40,12 +40,12 @@ namespace DryreLHub.SupabaseGameAchievements.Integrations
                 Debug.LogWarning("[Achievements] UnlockAchievement called from Lua without a key.");
                 return false;
             }
-            return AchievementManager.TryUnlock(achievementKey.Trim());
+            return AchievementManager.TryUnlock(achievementKey.Trim().Trim('"', '\''));
         }
 
         /// <summary>Lua: <c>HasAchievement("key")</c>.</summary>
         public bool HasAchievement(string achievementKey) =>
-            !string.IsNullOrEmpty(achievementKey) && AchievementManager.HasUnlocked(achievementKey.Trim());
+            !string.IsNullOrEmpty(achievementKey) && AchievementManager.HasUnlocked(achievementKey.Trim().Trim('"', '\''));
     }
 }
 

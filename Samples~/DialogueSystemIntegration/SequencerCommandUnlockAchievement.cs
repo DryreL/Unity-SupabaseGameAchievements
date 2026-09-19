@@ -1,4 +1,4 @@
-﻿using DryreLHub.SupabaseGameAchievements;
+using DryreLHub.SupabaseGameAchievements;
 using UnityEngine;
 
 namespace PixelCrushers.DialogueSystem.SequencerCommands
@@ -19,7 +19,8 @@ namespace PixelCrushers.DialogueSystem.SequencerCommands
             }
             else
             {
-                bool unlocked = AchievementManager.TryUnlock(key.Trim());
+                key = key.Trim().Trim('"', '\'');
+                bool unlocked = AchievementManager.TryUnlock(key);
                 if (DialogueDebug.logInfo) Debug.Log("[Sequencer] UnlockAchievement(" + key + ") -> " + (unlocked ? "unlocked" : "already unlocked or unknown"));
             }
             Stop();

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using DryreLHub.SupabaseGameAchievements.Unity;
 using UnityEngine;
 
@@ -79,21 +79,6 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
         {
             if (Instance != null) return Instance;
             return new GameObject("PatreonAchievementsBootstrap").AddComponent<PatreonAchievementsBootstrap>();
-        }
-
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        private static void AutoInitialize()
-        {
-            if (Instance != null) return;
-            var prefab = Resources.Load<PatreonAchievementsBootstrap>(""PatreonAchievementsBootstrap"");
-            if (prefab != null)
-            {
-                Instantiate(prefab).name = ""PatreonAchievementsBootstrap"";
-            }
-            else
-            {
-                EnsureCreated();
-            }
         }
 
         private void Awake()
@@ -198,7 +183,20 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
             try
             {
                 var type = Type.GetType(UnityLocalizationProviderTypeName);
-                return type != null ? Activator.CreateInstance(type) as IAchievementLocalizationProvider : null;
+                if (type == null)
+                {
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        type = asm.GetType("DryreLHub.SupabaseGameAchievements.Unity.UnityLocalizationProvider");
+                        if (type != null) break;
+                    }
+                }
+                if (type != null)
+                {
+                    try { return Activator.CreateInstance(type) as IAchievementLocalizationProvider; }
+                    catch { return Activator.CreateInstance(type, new object[] { null }) as IAchievementLocalizationProvider; }
+                }
+                return null;
             }
             catch (Exception e)
             {
@@ -230,5 +228,4 @@ namespace DryreLHub.SupabaseGameAchievements.Patreon
         }
     }
 }
-
 
