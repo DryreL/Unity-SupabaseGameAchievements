@@ -50,10 +50,10 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         }
 
         /// <summary>
-        /// The locale the achievement text is written in: the project locale if it is among the codes, else English,
+        /// The locale the achievement text is written in: English (<c>en</c>, else a regional English such as <c>en-GB</c>),
         /// else the first one. -1 when there are none.
         /// </summary>
-        public static int PickSource(IReadOnlyList<string> codes, string projectLocaleCode)
+        public static int PickSource(IReadOnlyList<string> codes)
         {
             if (codes.Count == 0) return -1;
 
@@ -64,8 +64,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 return -1;
             }
 
-            int found = string.IsNullOrEmpty(projectLocaleCode) ? -1 : Find(code => string.Equals(code, projectLocaleCode, StringComparison.OrdinalIgnoreCase));
-            if (found < 0) found = Find(code => string.Equals(code, "en", StringComparison.OrdinalIgnoreCase));
+            int found = Find(code => string.Equals(code, "en", StringComparison.OrdinalIgnoreCase));
             if (found < 0) found = Find(code => code.StartsWith("en-", StringComparison.OrdinalIgnoreCase));
             return found < 0 ? 0 : found;
         }

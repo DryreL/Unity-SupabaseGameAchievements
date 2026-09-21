@@ -228,7 +228,7 @@ toolbar. If the string table `ST_Achievements` does not exist it is created (in
 `clicked_on_a_link` gets `clicked_on_a_link_title` and `clicked_on_a_link_description`. The card's
 *Localization (optional)* fields are the overrides: a table or key you typed there is used instead of the
 default, and the empty ones are filled in with the defaults so the database row and the manifest point at
-the entries (push afterwards, then regenerate the manifest). The text goes into the **project locale** only (English if that is not set): the
+the entries (push afterwards, then regenerate the manifest). The text goes into the **English** (`en`) table only: the
 other locales get the keys but no text, so the table editor shows what still needs translating instead of English pasted
 into every language. Existing entries are never overwritten, so
 running Localize again only adds what is missing. Needs the `com.unity.localization` package, at least one

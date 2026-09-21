@@ -23,18 +23,20 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 _setup = AchievementRuntimeSetup.Combine(_setupOnDisk);
             }
 
-            if (_setup.IsStarted)
+            // A local copy: "Check again" clears the field in the middle of this method, and the rest must still finish.
+            var setup = _setup;
+            if (setup.IsStarted)
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(8);
-                    string where = string.Join(", ", _setup.StartedBy.Take(3)) + (_setup.StartedBy.Count > 3 ? " (+" + (_setup.StartedBy.Count - 3) + " more)" : "");
-                    GUILayout.Label(new GUIContent("Game setup: achievements are started by " + where + ".", string.Join("\n", _setup.StartedBy)), _styles.Mini);
+                    string where = string.Join(", ", setup.StartedBy.Take(3)) + (setup.StartedBy.Count > 3 ? " (+" + (setup.StartedBy.Count - 3) + " more)" : "");
+                    GUILayout.Label(new GUIContent("Game setup: achievements are started by " + where + ".", string.Join("\n", setup.StartedBy)), _styles.Mini);
                     GUILayout.FlexibleSpace();
                     if (GUILayout.Button("Check again", EditorStyles.miniButton, GUILayout.Width(84))) RecheckSetup();
                     GUILayout.Space(8);
                 }
-                if (_setup.HasUnsaved)
+                if (setup.HasUnsaved)
                     EditorGUILayout.HelpBox("Save the scene (Ctrl+S): until then a build or another machine does not have the bootstrap.", MessageType.Info);
                 return;
             }

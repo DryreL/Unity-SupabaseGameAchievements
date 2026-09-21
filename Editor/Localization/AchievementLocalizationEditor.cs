@@ -34,9 +34,10 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 return LocalizationSyncResult.Fail(
                     "This project has no Locales yet. Add at least one under Project Settings > Localization > Locale Generator, then try again.");
 
-            // The text is the achievement's own (English) wording, so only the source locale gets it. The other
-            // locales get no entry: pasting English into them would hide that they still need translating.
-            var source = locales[LocalizationLocales.PickSource(locales.Select(l => l.Identifier.Code).ToList(), ProjectLocaleCode())];
+            // The text is the achievement's own (English) wording, so only English gets it. The other locales' cells stay
+            // empty: pasting English into them would hide that they still need translating, and leaving the entry out
+            // (rather than adding an empty one) lets Unity's fallback locale keep working for them.
+            var source = locales[LocalizationLocales.PickSource(locales.Select(l => l.Identifier.Code).ToList())];
             var result = new LocalizationSyncResult { Ok = true, Locales = locales.Count, SourceLocale = source.Identifier.Code };
             string root = folder.Trim().Replace('\\', '/').Trim('/');
 
@@ -82,20 +83,6 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             }
 
             return result;
-        }
-
-        private static string ProjectLocaleCode()
-        {
-            try
-            {
-                var settings = LocalizationEditorSettings.ActiveLocalizationSettings;
-                var property = new SerializedObject(settings).FindProperty("m_ProjectLocaleIdentifier.m_Code");
-                return property?.stringValue;
-            }
-            catch (Exception)
-            {
-                return null; // the internal field moved: fall back to English, then the first locale
-            }
         }
     }
 }

@@ -22,20 +22,19 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
         }
 
         [Test]
-        public void The_project_locale_receives_the_text()
+        public void English_receives_the_text_wherever_it_sits_in_the_list()
         {
-            Assert.AreEqual(1, LocalizationLocales.PickSource(new[] { "en", "tr", "fr" }, "tr"));
-            Assert.AreEqual(2, LocalizationLocales.PickSource(new[] { "en", "tr", "fr" }, "FR"));
+            Assert.AreEqual(0, LocalizationLocales.PickSource(new[] { "en", "tr", "fr" }));
+            Assert.AreEqual(2, LocalizationLocales.PickSource(new[] { "tr", "fr", "EN" }));
         }
 
         [Test]
-        public void English_is_the_fallback_then_the_first_locale()
+        public void A_regional_english_then_the_first_locale_when_there_is_no_plain_english()
         {
-            Assert.AreEqual(2, LocalizationLocales.PickSource(new[] { "tr", "fr", "en" }, null), "no project locale: English");
-            Assert.AreEqual(2, LocalizationLocales.PickSource(new[] { "tr", "fr", "en" }, "de"), "project locale is not in the list: English");
-            Assert.AreEqual(1, LocalizationLocales.PickSource(new[] { "tr", "en-GB" }, ""), "a regional English");
-            Assert.AreEqual(0, LocalizationLocales.PickSource(new[] { "tr", "fr" }, null), "no English at all: the first one");
-            Assert.AreEqual(-1, LocalizationLocales.PickSource(new string[0], "en"));
+            Assert.AreEqual(1, LocalizationLocales.PickSource(new[] { "tr", "en-GB" }), "a regional English");
+            Assert.AreEqual(2, LocalizationLocales.PickSource(new[] { "en-US", "tr", "en" }), "plain English wins over a regional one");
+            Assert.AreEqual(0, LocalizationLocales.PickSource(new[] { "tr", "fr" }), "no English at all: the first one");
+            Assert.AreEqual(-1, LocalizationLocales.PickSource(new string[0]));
         }
     }
 }
