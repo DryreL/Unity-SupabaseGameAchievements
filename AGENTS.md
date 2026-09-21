@@ -97,9 +97,16 @@ launcher's own "only 2 Edge Functions" rule) gained `?action=supabase-session`:
 
 1. Verifies the caller's Patreon access token by calling Patreon's own `/identity` endpoint — the
    Patreon user id comes from Patreon, never trusted from the client.
-2. Finds or creates a Supabase Auth user `patreon-<id>@<IDENTITY_EMAIL_DOMAIN>` with
-   `app_metadata.patreon_id` (service-role only field).
+2. Resolves the Supabase Auth user through `public.patreon_identities` (`patreon_id` unique →
+   `user_id`), and only when there is none finds or creates `patreon-<id>@<IDENTITY_EMAIL_DOMAIN>`
+   with `app_metadata.patreon_id` (service-role only field). It upserts the identity row (with
+   `patreon_username`) on every sign-in. Do not identify a player by the synthetic e-mail: two
+   copies of the function with different default domains once produced two accounts per Patreon
+   user, which is why the achievements of "the same user" appeared under different `user_id`s.
 3. Mints a session via admin `generate_link` + `verify` (no email is ever sent).
+
+RLS and RPCs read the identity from `app_metadata.patreon_id` **only** (`jwt_patreon_id()`);
+`user_metadata` is user-editable and must never be trusted. See the plugin's `AGENTS.md` §3.1 rules 8–9.
 
 The client then refreshes that session the normal Supabase way; the Edge Function is not on the refresh
 path. See `Runtime/Core/Auth/SupabaseSessionAuthProvider.cs` (generic caching/refresh) and
@@ -165,6 +172,12 @@ consumers (raw API, Patreon-specific turnkey, defensive/UI-first).
 
 - `games`, `achievements` (catalog, immutable `bit_index`/`achievement_key`/`id` once shipped, no hard
   delete — trigger-enforced), `user_achievements` (tiny: `user_id`, `achievement_id`, `unlocked_at`).
+- **Identity columns** (`20260920000000_patreon_identity.sql`): `public.patreon_identities`
+  (`user_id` PK → `auth.users`, `patreon_id` unique, `patreon_username`; select-own only, written by the
+  service role), and `user_achievements.patreon_id` / `patreon_username` / `game_slug`, filled by a
+  trigger from `patreon_identities` and the catalog. `(patreon_id, game_id)` is unique, so one Patreon
+  account can never hold two rows for a game. `user_achievements_readable` is a `security_invoker` view.
+  `public.user_profiles` is **not** created by this repo: it belongs to the website (keyed by `id`).
 - Every table's client grants are explicit (`revoke all ... ; grant select ...`) — Supabase's default
   privileges otherwise hand new tables to `anon`/`authenticated` automatically, and RLS policies alone
   do not revoke grants.
@@ -338,6 +351,11 @@ disrupt the user's own Editor session.
   been pushed.
 - `<YourGameName>` references this package by **git URL**, not `file:`, so local edits here need a
   push (and the consuming project needs to re-resolve packages) before they take effect there.
+- Live database (2026-09-20/21): `20260920000000_patreon_identity.sql` was applied through the SQL editor and
+  the improved `patreon-middleware` deployed (identical in this repo and the plugin). The migration
+  `20260918000000_patreon_profiles.sql` is a stub. Duplicate accounts from the old default-domain bug were
+  merged/removed. The website's hardening (tokens moved to `patreon_credentials`, `public_profiles`, ...) is
+  documented in `Viznity.Github.io/AGENTS.md` §4.4.
 - The `supabase/` folder existing in two repos (§1) has not been reconciled — verify before assuming
   either is the sole source of truth, and check whether the actual Supabase project has all pending
   migrations applied (`supabase db push` was **not** run as part of any of this work; migration files
