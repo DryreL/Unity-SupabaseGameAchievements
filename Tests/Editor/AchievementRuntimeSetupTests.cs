@@ -36,6 +36,39 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             Assert.AreEqual(expected, AchievementRuntimeSetup.CodeStartsSystem(source));
         }
 
+        private static AchievementRuntimeSetup.Report StartedIn(params string[] sceneFiles)
+        {
+            var report = new AchievementRuntimeSetup.Report();
+            foreach (string file in sceneFiles)
+            {
+                report.StartedBy.Add("AchievementBootstrap in " + file);
+                report.BootstrapScenes.Add(file);
+            }
+            return report;
+        }
+
+        [Test]
+        public void A_scene_without_a_bootstrap_is_flagged_when_only_other_scenes_have_one()
+        {
+            var report = StartedIn("MainMenu_v1.3.unity");
+
+            Assert.IsTrue(AchievementRuntimeSetup.SceneLacksStarter(report, "Assets/Scenes/Game/Game_v1.3.unity"), "Play here would leave achievements off");
+            Assert.IsFalse(AchievementRuntimeSetup.SceneLacksStarter(report, "Assets/Scenes/MainMenu_v1.3.unity"));
+            Assert.IsFalse(AchievementRuntimeSetup.SceneLacksStarter(report, "Assets/Scenes/mainmenu_v1.3.UNITY"), "file names compare without regard to case");
+        }
+
+        [Test]
+        public void Nothing_is_flagged_when_the_system_starts_everywhere_or_nowhere()
+        {
+            var everywhere = StartedIn("MainMenu.unity");
+            everywhere.StartedElsewhere = true; // game code or a prefab starts it in every scene
+
+            Assert.IsFalse(AchievementRuntimeSetup.SceneLacksStarter(everywhere, "Assets/Game.unity"));
+            Assert.IsFalse(AchievementRuntimeSetup.SceneLacksStarter(new AchievementRuntimeSetup.Report(), "Assets/Game.unity"), "not started at all is a different warning");
+            Assert.IsFalse(AchievementRuntimeSetup.SceneLacksStarter(null, "Assets/Game.unity"));
+            Assert.IsFalse(AchievementRuntimeSetup.SceneLacksStarter(StartedIn("A.unity"), ""), "an untitled scene has no file to compare");
+        }
+
         [Test]
         public void Only_public_keys_may_be_written_into_a_scene()
         {

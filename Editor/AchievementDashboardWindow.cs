@@ -191,7 +191,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             catch (Exception e)
             {
                 string described = DashboardData.Describe(e);
-                if (_saveError != described) Debug.LogWarning("[Achievements] Could not save the dashboard file '" + _dataPath + "': " + described);
+                if (_saveError != described) Debug.LogError("[Achievements] Could not save the dashboard file '" + _dataPath + "':\n" + e);
                 if (_saveError == null) _saveFailingSince = EditorApplication.timeSinceStartup;
                 _saveError = described;
 
@@ -282,7 +282,25 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             else { saveText = "AUTOSAVE ON"; saveColor = Palette.Retired; }
             DrawPill(new Rect(r.xMax - 148, r.y + 18, 132, 22), saveText, saveColor);
 
-            if (SaveFailureVisible) EditorGUILayout.HelpBox("Could not save '" + _dataPath + "': " + _saveError, MessageType.Error);
+            if (SaveFailureVisible) DrawErrorBox("Could not save '" + _dataPath + "': " + _saveError);
+        }
+
+        /// <summary>
+        /// A red box with the whole message as plain, selectable text (a HelpBox showed nothing after the first colon of
+        /// a long exception message). An empty message says so instead of drawing an empty box.
+        /// </summary>
+        private void DrawErrorBox(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) message = "(the error has no text: see the Console for the exception)";
+
+            var style = new GUIStyle(EditorStyles.wordWrappedLabel) { richText = false, fontSize = 11, padding = new RectOffset(8, 8, 4, 4) };
+            float height = style.CalcHeight(new GUIContent(message), Mathf.Max(100f, position.width - 40f)) + 6f;
+            Rect box = GUILayoutUtility.GetRect(0, height, GUILayout.ExpandWidth(true));
+            box.xMin += 8;
+            box.xMax -= 8;
+            EditorGUI.DrawRect(box, new Color(0.62f, 0.14f, 0.14f, 0.35f));
+            EditorGUI.DrawRect(new Rect(box.x, box.y, 3, box.height), Palette.Danger);
+            EditorGUI.SelectableLabel(new Rect(box.x + 6, box.y + 2, box.width - 8, box.height - 4), message, style);
         }
 
         private void DrawStatTiles()

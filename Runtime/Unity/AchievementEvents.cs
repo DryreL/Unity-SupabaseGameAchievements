@@ -21,6 +21,20 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             _warnedNoRules = false;
         }
 
+        /// <summary>The likeliest reason no rules are listening, so the message tells the user what to do rather than guessing.</summary>
+        internal static string WhyNothingListens()
+        {
+            bool started = UnityAchievementManager.Instance != null || AchievementManager.IsInitialized;
+            if (!started)
+                return "the achievement system has not started in this play session, so nothing is listening. " +
+                       "Press Play in a scene that has an Achievement Bootstrap (or start the game from the scene that has one), " +
+                       "or add one to this scene: Achievement Dashboard, Game setup, 'Add bootstrap to the open scene'.";
+
+            return "the achievement system is running but no rules are loaded. " +
+                   "Write Resources/Achievements/rules.json from the Achievement Dashboard's Rules tab (it is loaded automatically), " +
+                   "or add an AchievementRulesBehaviour. If the file exists, check the Console for 'Achievement rules were not loaded'.";
+        }
+
         public static void Register(AchievementRules rules)
         {
             if (rules != null && !Listeners.Contains(rules)) Listeners.Add(rules);
@@ -38,8 +52,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 if (!_warnedNoRules)
                 {
                     _warnedNoRules = true;
-                    Debug.LogWarning("[Achievements] Report('" + eventName + "') ignored: no achievement rules are active. " +
-                        "Write rules.json from the Achievement Dashboard's Rules tab (it is loaded automatically), or add an AchievementRulesBehaviour.");
+                    Debug.LogWarning("[Achievements] Report('" + eventName + "') ignored: " + WhyNothingListens());
                 }
                 return;
             }

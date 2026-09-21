@@ -303,7 +303,16 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
             string temp = fullPath + ".tmp";
-            File.WriteAllText(temp, json, new UTF8Encoding(false));
+            try
+            {
+                File.WriteAllText(temp, json, new UTF8Encoding(false));
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                // The temp file could not even be written: write the target itself, which is what rules.json does.
+                WriteInPlace(fullPath, json, e);
+                return;
+            }
 
             Exception last = null;
             for (int attempt = 0; attempt < 4; attempt++)
@@ -333,7 +342,34 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 System.Threading.Thread.Sleep(40 * (attempt + 1));
             }
 
-            throw new IOException("Could not replace '" + fullPath + "': " + Describe(last), last);
+            // Replace and copy both failed: something holds the file in a way that blocks swapping but may still allow writing.
+            try
+            {
+                WriteInPlace(fullPath, json, last);
+                File.Delete(temp);
+                return;
+            }
+            catch (IOException e)
+            {
+                throw new IOException("Could not replace '" + fullPath + "' (swap, copy and direct write all failed): " + Describe(last) + " / " + Describe(e), e);
+            }
+        }
+
+        // Writes the file directly, allowing other processes to keep it open. Not atomic, so it is the last resort.
+        private static void WriteInPlace(string fullPath, string json, Exception earlier)
+        {
+            try
+            {
+                using (var stream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+                {
+                    byte[] bytes = new UTF8Encoding(false).GetBytes(json);
+                    stream.Write(bytes, 0, bytes.Length);
+                }
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                throw new IOException("Could not write '" + fullPath + "': " + Describe(e) + (earlier != null ? " (after: " + Describe(earlier) + ")" : ""), e);
+            }
         }
 
         /// <summary>

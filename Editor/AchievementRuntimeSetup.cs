@@ -21,6 +21,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             /// <summary>Where a bootstrap was found, e.g. "PatreonAchievementsBootstrap in MainMenu.unity".</summary>
             public readonly List<string> StartedBy = new List<string>();
 
+            /// <summary>File names of the scenes that contain a bootstrap object.</summary>
+            public readonly HashSet<string> BootstrapScenes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            /// <summary>True when something other than a scene object starts the system (game code, a prefab): it then works in every scene.</summary>
+            public bool StartedElsewhere;
+
             public bool IsStarted => StartedBy.Count > 0;
 
             /// <summary>True when a bootstrap exists only in a scene that has not been saved yet.</summary>
@@ -28,6 +34,16 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         }
 
         internal const string UnsavedSuffix = " (not saved yet)";
+
+        /// <summary>
+        /// True when the system is started only by bootstrap objects in other scenes, so pressing Play in this scene
+        /// (or loading it first) leaves achievements off. Pure, so it is unit-tested.
+        /// </summary>
+        internal static bool SceneLacksStarter(Report report, string scenePath)
+        {
+            if (report == null || !report.IsStarted || report.StartedElsewhere || string.IsNullOrEmpty(scenePath)) return false;
+            return !report.BootstrapScenes.Contains(Path.GetFileName(scenePath));
+        }
 
         // Classes that start the system when they are in a scene or prefab, with the name shown to the user.
         private static readonly (string FullName, string Label)[] Bootstraps =
@@ -84,7 +100,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         public static Report Combine(Report onDisk)
         {
             var report = new Report();
-            if (onDisk != null) report.StartedBy.AddRange(onDisk.StartedBy);
+            if (onDisk != null)
+            {
+                report.StartedBy.AddRange(onDisk.StartedBy);
+                foreach (string file in onDisk.BootstrapScenes) report.BootstrapScenes.Add(file);
+                report.StartedElsewhere = onDisk.StartedElsewhere;
+            }
 
             for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
             {
@@ -95,6 +116,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 string file = string.IsNullOrEmpty(scene.path) ? "an untitled scene" : Path.GetFileName(scene.path);
                 foreach (string label in BootstrapsInScene(scene))
                 {
+                    if (!string.IsNullOrEmpty(scene.path)) report.BootstrapScenes.Add(file);
                     string entry = label + " in " + file;
                     if (report.StartedBy.Contains(entry)) continue; // already saved on disk
                     report.StartedBy.Add(unsaved ? entry + UnsavedSuffix : entry);
@@ -148,7 +170,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                         if (yaml == null || !yaml.StartsWith("%YAML", StringComparison.Ordinal)) continue;
 
                         foreach (var script in scripts)
-                            if (ReferencesScript(yaml, script.Guid)) report.StartedBy.Add(script.Label + " in " + Path.GetFileName(path));
+                        {
+                            if (!ReferencesScript(yaml, script.Guid)) continue;
+                            report.StartedBy.Add(script.Label + " in " + Path.GetFileName(path));
+                            if (path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase)) report.BootstrapScenes.Add(Path.GetFileName(path));
+                            else report.StartedElsewhere = true; // a prefab can be dropped into any scene
+                        }
                     }
                 }
             }
@@ -156,7 +183,9 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             foreach (string file in EnumerateRuntimeScripts())
             {
                 string source = ReadSmallText(file);
-                if (CodeStartsSystem(source)) report.StartedBy.Add("code in " + Path.GetFileName(file));
+                if (!CodeStartsSystem(source)) continue;
+                report.StartedBy.Add("code in " + Path.GetFileName(file));
+                report.StartedElsewhere = true;
             }
 
             report.StartedBy.Sort(StringComparer.Ordinal);

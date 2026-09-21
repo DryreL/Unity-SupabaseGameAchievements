@@ -38,6 +38,25 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 }
                 if (setup.HasUnsaved)
                     EditorGUILayout.HelpBox("Save the scene (Ctrl+S): until then a build or another machine does not have the bootstrap.", MessageType.Info);
+
+                var active = UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene();
+                if (active.IsValid() && AchievementRuntimeSetup.SceneLacksStarter(setup, active.path))
+                {
+                    EditorGUILayout.HelpBox(
+                        "The open scene '" + active.name + "' has no bootstrap; it is only in " + string.Join(", ", setup.BootstrapScenes) + ". " +
+                        "Pressing Play in this scene (or loading it first) leaves achievements off, and every unlock and rule is ignored. " +
+                        "Add one here too: it does nothing when the system is already running, so it is safe in every scene.",
+                        MessageType.Warning);
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        GUILayout.Space(8);
+                        using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
+                        {
+                            if (GUILayout.Button("Add bootstrap to this scene too", GUILayout.Height(22))) AddBootstrap();
+                        }
+                        GUILayout.Space(8);
+                    }
+                }
                 return;
             }
 

@@ -933,6 +933,31 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
         }
 
         [Test]
+        public void A_file_that_cannot_be_swapped_but_can_be_written_is_still_saved()
+        {
+            string path = TempDashboardPath();
+            try
+            {
+                var data = Connected();
+                data.Save(path);
+                data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "a", 0)));
+
+                // Open for reading and writing by others but not for deleting: File.Replace fails, an overwrite works.
+                using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    Assert.DoesNotThrow(() => data.Save(path));
+                }
+
+                Assert.AreEqual(1, DashboardData.Load(path).Achievements.Count);
+                Assert.IsFalse(File.Exists(path + ".tmp"));
+            }
+            finally
+            {
+                Cleanup(path);
+            }
+        }
+
+        [Test]
         public void A_save_that_cannot_swap_reports_why_and_keeps_the_newest_copy_in_the_temp_file()
         {
             string path = TempDashboardPath();

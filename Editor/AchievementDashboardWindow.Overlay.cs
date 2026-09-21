@@ -100,7 +100,9 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             }
             catch (Exception e)
             {
-                _overlaySaveError = "Could not save overlay.json: " + DashboardData.Describe(e);
+                string described = DashboardData.Describe(e);
+                if (_overlaySaveError == null) Debug.LogError("[Achievements] Could not save overlay.json:\n" + e);
+                _overlaySaveError = "Could not save overlay.json: " + described;
                 _overlaySaveAt = EditorApplication.timeSinceStartup + 1.0; // try again
             }
         }
@@ -130,8 +132,8 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 GUILayout.Space(8);
             }
 
-            if (_overlayLoadError != null) EditorGUILayout.HelpBox(_overlayLoadError, MessageType.Error);
-            if (_overlaySaveError != null) EditorGUILayout.HelpBox(_overlaySaveError, MessageType.Error);
+            if (_overlayLoadError != null) DrawErrorBox(_overlayLoadError);
+            if (_overlaySaveError != null) DrawErrorBox(_overlaySaveError);
 
             using (var scroll = new EditorGUILayout.ScrollViewScope(_overlayScroll))
             {
