@@ -7,6 +7,16 @@ using Newtonsoft.Json.Linq;
 
 namespace DryreLHub.SupabaseGameAchievements
 {
+    /// <summary>How an achievement's icon is composed in the unlock toast.</summary>
+    public enum AchievementIconStyle
+    {
+        /// <summary>One image per achievement that already contains its own background (the default).</summary>
+        Combined = 0,
+
+        /// <summary>One shared background image for every achievement, with the achievement's own icon drawn on top.</summary>
+        Layered = 1,
+    }
+
     /// <summary>
     /// Read-only, pre-indexed achievement catalog for one game. Built once at startup; every lookup
     /// afterwards is an allocation-free dictionary or array access.
@@ -24,7 +34,11 @@ namespace DryreLHub.SupabaseGameAchievements
         private readonly AchievementDefinition[] _byBit;
         private readonly AchievementDefinition[] _ordered;
 
-        public AchievementCatalog(long gameId, string gameSlug, int catalogVersion, IEnumerable<AchievementDefinition> achievements)
+        /// <summary>Fraction of the background left as a margin on each side of the icon in <see cref="AchievementIconStyle.Layered"/>.</summary>
+        public const float DefaultIconInset = 0.18f;
+
+        public AchievementCatalog(long gameId, string gameSlug, int catalogVersion, IEnumerable<AchievementDefinition> achievements,
+            AchievementIconStyle iconStyle = AchievementIconStyle.Combined, string iconBackground = null, float iconInset = DefaultIconInset)
         {
             if (gameId <= 0) throw new AchievementCatalogException("Catalog gameId must be positive.");
             if (string.IsNullOrEmpty(gameSlug)) throw new AchievementCatalogException("Catalog game slug is required.");
@@ -34,6 +48,9 @@ namespace DryreLHub.SupabaseGameAchievements
             GameId = gameId;
             GameSlug = gameSlug;
             CatalogVersion = catalogVersion;
+            IconStyle = iconStyle;
+            IconBackground = string.IsNullOrEmpty(iconBackground) ? null : iconBackground;
+            IconInset = iconInset < 0f ? 0f : iconInset > 0.45f ? 0.45f : iconInset;
 
             _byKey = new Dictionary<string, AchievementDefinition>(StringComparer.Ordinal);
             _byId = new Dictionary<long, AchievementDefinition>();
@@ -73,6 +90,15 @@ namespace DryreLHub.SupabaseGameAchievements
         public string GameSlug { get; }
 
         public int CatalogVersion { get; }
+
+        /// <summary>Game-wide icon composition; <see cref="AchievementIconStyle.Combined"/> unless the manifest says otherwise.</summary>
+        public AchievementIconStyle IconStyle { get; }
+
+        /// <summary>Engine-specific path of the shared background image (Layered style), or null.</summary>
+        public string IconBackground { get; }
+
+        /// <summary>Margin around the icon inside the background, as a fraction of the background size (0..0.45).</summary>
+        public float IconInset { get; }
 
         public int Count => _ordered.Length;
 
@@ -176,7 +202,23 @@ namespace DryreLHub.SupabaseGameAchievements
                 }
             }
 
-            return new AchievementCatalog(gameId, slug, catalogVersion, definitions);
+            return new AchievementCatalog(gameId, slug, catalogVersion, definitions,
+                ReadIconStyle(root), ReadString(root, "iconBackground"), ReadFloat(root, "iconInset", DefaultIconInset));
+        }
+
+        // Unknown styles fall back to Combined so a manifest written by a newer tool never breaks an older game.
+        private static AchievementIconStyle ReadIconStyle(JObject root)
+        {
+            string style = ReadString(root, "iconStyle");
+            return string.Equals(style, "layered", StringComparison.OrdinalIgnoreCase) ? AchievementIconStyle.Layered : AchievementIconStyle.Combined;
+        }
+
+        private static float ReadFloat(JObject obj, string name, float fallback)
+        {
+            var token = obj[name];
+            if (token == null || token.Type == JTokenType.Null) return fallback;
+            if (token.Type != JTokenType.Float && token.Type != JTokenType.Integer) throw new AchievementCatalogException("'" + name + "' must be a number.");
+            return Convert.ToSingle(((JValue)token).Value, CultureInfo.InvariantCulture);
         }
 
         private static string ReadString(JObject obj, string name)

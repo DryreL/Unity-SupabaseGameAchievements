@@ -166,6 +166,30 @@ the dashboard, or write your own push script against Unity's current Remote Conf
 extension). Unlike localization tables, this path matters: `Resources.Load` resolves it literally. This
 is always offline-safe and instant — no network, ever.
 
+**Two icon styles.** The toast can compose its icon in one of two ways, a game-wide choice:
+
+1. **Combined** (default): each achievement's image already contains its own background. Nothing to set up.
+2. **Layered**: one shared background image for every achievement, plus each achievement's own icon drawn
+   on top, shrunk to leave a margin (`iconInset`, 0.18 of the background by default). Put the background
+   at `Assets/Resources/<prefix><IconFolder>/background.png` (e.g. `Assets/Resources/Achievements/images/background.png`)
+   and give each achievement a transparent icon.
+
+The **Achievement Dashboard** has an *Icon Style* setting (under *Connection & files*) that shows both in
+its previews and writes `"iconStyle": "layered"`, `"iconBackground": "images/background"` (and `"iconInset"`
+when it is not the default) into the manifest it generates; a Combined game's manifest has none of these
+fields. At runtime `UnityAchievementManager`'s *Icon Style* is **Auto** (follow the manifest), or force
+Combined/Layered, and optionally assign the background `Sprite` or a Resources path directly (both are also
+in `UnityAchievementManager.Config`). If the layered background cannot be found the game logs a warning and
+uses combined icons, so a missing file never blanks the toast.
+
+The style is stored in Supabase on the game row (`games.icon_style` = `combined` / `layered`,
+`icon_background`, `icon_inset`; migration `20260921000000_games_icon_style.sql`, apply it with
+`supabase db push`). The dashboard's **Push** sends a changed style (and **Pull** reads it), and every
+export - the dashboard's Manifest button, the *Export Achievement Catalog* window and
+`scripts/export-achievement-catalog.mjs` - writes the same manifest fields. Changing the style bumps
+`catalog_version` like any catalog change. Against a database that has not applied the migration everything
+keeps working as Combined.
+
 **Hosted (dual support).** Set `icon_path` in Supabase to a full URL instead of a local path — anything
 starting with `http://`, `https://`, or `www.` — and `ResourcesAchievementIconProvider` downloads it at
 runtime instead of loading it from Resources. Mix and match freely: some achievements packaged, others

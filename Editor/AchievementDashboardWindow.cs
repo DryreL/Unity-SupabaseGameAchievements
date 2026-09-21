@@ -256,11 +256,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                         ConnectAndPull();
                 }
 
-                int pending = _data.Pending.Count();
+                int pending = _data.Pending.Count() + (_data.IsGameIconPending ? 1 : 0);
                 using (new EditorGUI.DisabledScope(pending == 0 || _data.GameId <= 0 || !CanTalkToSupabase(out _)))
                 {
-                    if (GUILayout.Button(new GUIContent("Push " + (pending > 0 ? "(" + pending + ")" : ""), "Send every new or modified achievement to Supabase."), EditorStyles.toolbarButton, GUILayout.Width(74)))
-                        PushItems(_data.Pending.ToList());
+                    if (GUILayout.Button(new GUIContent("Push " + (pending > 0 ? "(" + pending + ")" : ""), "Send every new or modified achievement, and a changed icon style, to Supabase."), EditorStyles.toolbarButton, GUILayout.Width(74)))
+                        PushItems(_data.Pending.ToList(), true);
                 }
 
                 using (new EditorGUI.DisabledScope(_data.Achievements.Count == 0))
@@ -345,6 +345,28 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 if (EditorGUI.EndChangeCheck())
                 {
                     _data.SetIconFolder(iconFolder);
+                    MarkDirty();
+                }
+
+                EditorGUI.BeginChangeCheck();
+                int styleIndex = EditorGUILayout.Popup(
+                    new GUIContent("Icon Style", "Combined: each achievement's image already includes its background. Layered: one shared background image for every achievement, with the achievement's own icon drawn on top."),
+                    (int)_data.IconStyle, new[] { "Combined  (background + icon in one image)", "Layered  (shared background + separate icon)" });
+                if (styleIndex == (int)AchievementIconStyle.Layered)
+                {
+                    _data.IconBackground = HintTextField(
+                        new GUIContent("Icon Background", "The shared background image, relative to the icon prefix, no extension. Empty = <Icon Folder>/background, i.e. Assets/Resources/Achievements/images/background.png."),
+                        _data.IconBackground, _data.IconPathFor("background"));
+                    _data.IconInset = EditorGUILayout.Slider(
+                        new GUIContent("Icon Inset", "Margin around the icon inside the background, as a fraction of its size."),
+                        _data.IconInset, 0f, 0.45f);
+                }
+                if (_data.IsGameIconPending)
+                    EditorGUILayout.LabelField("Icon style change not sent yet: Push saves it to Supabase (games.icon_style), so every export carries it.", _styles.Mini);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    _data.IconStyle = (AchievementIconStyle)styleIndex;
+                    DropLocalIconCache(); // previews are cheap to reload and may have changed on disk
                     MarkDirty();
                 }
 
@@ -641,23 +663,36 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private void DrawIcon(Rect rect, DashboardAchievement a)
         {
             EditorGUI.DrawRect(rect, Palette.Tile);
-            var icon = ResolveIcon(a);
+            Rect iconRect = Inset(rect);
 
-            if (icon is Sprite sprite && sprite.texture != null)
+            if (_data.IconStyle == AchievementIconStyle.Layered)
+            {
+                // Same composition as the runtime: the shared background fills the slot, the icon sits inside it.
+                DrawImage(Inset(rect), GetLocalIcon(_data.EffectiveIconBackground));
+                float margin = rect.width * Mathf.Clamp(_data.IconInset, 0f, 0.45f);
+                iconRect = new Rect(rect.x + margin, rect.y + margin, rect.width - 2 * margin, rect.height - 2 * margin);
+            }
+
+            if (!DrawImage(iconRect, ResolveIcon(a)))
+                GUI.Label(rect, "?", _styles.IconPlaceholder);
+        }
+
+        private static bool DrawImage(Rect rect, UnityEngine.Object image)
+        {
+            if (image is Sprite sprite && sprite.texture != null)
             {
                 var texture = sprite.texture;
                 var uv = new Rect(sprite.rect.x / texture.width, sprite.rect.y / texture.height,
                     sprite.rect.width / texture.width, sprite.rect.height / texture.height);
-                GUI.DrawTextureWithTexCoords(Inset(rect), texture, uv);
+                GUI.DrawTextureWithTexCoords(rect, texture, uv);
+                return true;
             }
-            else if (icon is Texture texture2)
+            if (image is Texture texture2)
             {
-                GUI.DrawTexture(Inset(rect), texture2, ScaleMode.ScaleToFit);
+                GUI.DrawTexture(rect, texture2, ScaleMode.ScaleToFit);
+                return true;
             }
-            else
-            {
-                GUI.Label(rect, "?", _styles.IconPlaceholder);
-            }
+            return false;
         }
 
         private static Rect Inset(Rect r) => new Rect(r.x + 2, r.y + 2, r.width - 4, r.height - 4);
@@ -764,7 +799,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             _isBusy = true;
             SetStatus("Looking up game '" + _data.GameSlug + "'...", MessageType.Info);
-            Send("GET", "games?slug=eq." + UnityWebRequest.EscapeURL(_data.GameSlug) + "&select=id,slug,name,catalog_version", null, null, response =>
+            LookUpGame(true, response =>
             {
                 if (!response.Ok) { Fail(Describe(response)); return; }
 
@@ -780,6 +815,22 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 _gameMissing = false;
                 ApplyGameRow((JObject)games[0]);
                 PullAchievements();
+            });
+        }
+
+        // The icon_* columns come from 20260921000000_games_icon_style.sql; a database without it answers 400
+        // for them, so retry once without them and keep working with the Combined default.
+        private void LookUpGame(bool withIconColumns, Action<Response> done)
+        {
+            string columns = "id,slug,name,catalog_version" + (withIconColumns ? ",icon_style,icon_background,icon_inset" : "");
+            Send("GET", "games?slug=eq." + UnityWebRequest.EscapeURL(_data.GameSlug) + "&select=" + columns, null, null, response =>
+            {
+                if (!response.Ok && withIconColumns && response.Code == 400 && (response.Body ?? "").Contains("icon_"))
+                {
+                    LookUpGame(false, done);
+                    return;
+                }
+                done(response);
             });
         }
 
@@ -813,8 +864,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             _data.CatalogVersion = game.Value<int?>("catalog_version") ?? 1;
             string name = game.Value<string>("name");
             if (string.IsNullOrEmpty(_data.GameName) && !string.IsNullOrEmpty(name)) _data.GameName = name;
+            _gameIconEditsKept = !_data.ApplyGameIcon(game);
             SaveNow();
         }
+
+        private bool _gameIconEditsKept;
 
         private void PullAchievements()
         {
@@ -831,14 +885,17 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 string message = "Pulled '" + _data.GameSlug + "' (catalog v" + _data.CatalogVersion + "): " +
                     result.Added + " added, " + result.Updated + " updated";
                 if (result.LocalEditsKept > 0) message += ", " + result.LocalEditsKept + " kept with your unsent edits";
+                if (_gameIconEditsKept) message += "; your unsent icon style change was kept";
                 SetStatus(message + ".", MessageType.Info);
                 _showConnection = false;
             });
         }
 
-        private void PushItems(List<DashboardAchievement> items)
+        /// <param name="includeGame">Also send a changed game-wide icon style (the toolbar Push does, a single card's does not).</param>
+        private void PushItems(List<DashboardAchievement> items, bool includeGame = false)
         {
-            if (items.Count == 0) return;
+            bool sendGame = includeGame && _data.IsGameIconPending;
+            if (items.Count == 0 && !sendGame) return;
             if (!CanTalkToSupabase(out string problem)) { Fail(problem); return; }
             if (_data.GameId <= 0) { Fail("Connect the game first (Connection & files > Connect & Pull)."); return; }
 
@@ -852,15 +909,32 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             var inserts = items.Where(a => a.State == DashboardSyncState.New).ToList();
             var updates = items.Where(a => a.State == DashboardSyncState.Modified).ToList();
-            if (inserts.Count + updates.Count == 0) return;
+            if (inserts.Count + updates.Count == 0 && !sendGame) return;
 
             _isBusy = true;
-            SetStatus("Pushing " + (inserts.Count + updates.Count) + " achievement(s)...", MessageType.Info);
-            RunInserts(inserts, () => RunUpdates(updates, 0, () => RefreshCatalogVersion(() =>
+            SetStatus("Pushing " + (inserts.Count + updates.Count) + " achievement(s)" + (sendGame ? " and the icon style" : "") + "...", MessageType.Info);
+            RunInserts(inserts, () => RunUpdates(updates, 0, () => RunGameIcon(sendGame, () => RefreshCatalogVersion(() =>
             {
                 _isBusy = false;
-                SetStatus("Pushed " + inserts.Count + " new and " + updates.Count + " updated achievement(s). Catalog is now v" + _data.CatalogVersion + ".", MessageType.Info);
-            })));
+                SetStatus("Pushed " + inserts.Count + " new and " + updates.Count + " updated achievement(s)" + (sendGame ? " and the icon style" : "") +
+                    ". Catalog is now v" + _data.CatalogVersion + ".", MessageType.Info);
+            }))));
+        }
+
+        // The icon style belongs to the game row, not to an achievement: PATCH games, and the server bumps catalog_version.
+        private void RunGameIcon(bool send, Action next)
+        {
+            if (!send) { next(); return; }
+
+            Send("PATCH", "games?id=eq." + _data.GameId, _data.BuildGameIconPayload().ToString(Newtonsoft.Json.Formatting.None), "return=representation", response =>
+            {
+                if (!response.Ok) { Fail("Icon style: " + Describe(response)); return; }
+                if (JArray.Parse(response.Body).Count == 0) { Fail("The game (id " + _data.GameId + ") no longer exists in Supabase. Press Pull to resync."); return; }
+
+                _data.MarkGameIconSynced();
+                SaveNow();
+                next();
+            });
         }
 
         private void RunInserts(List<DashboardAchievement> inserts, Action next)
@@ -981,9 +1055,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             int unsent = _data.Achievements.Count(a => a.State == DashboardSyncState.New);
             int modified = _data.Achievements.Count(a => a.State == DashboardSyncState.Modified);
-            if (unsent + modified > 0 && !EditorUtility.DisplayDialog("Unsent changes",
+            bool iconPending = _data.IsGameIconPending;
+            if ((unsent + modified > 0 || iconPending) && !EditorUtility.DisplayDialog("Unsent changes",
                     unsent + " new achievement(s) will be left out (no server id yet) and " + modified +
-                    " modified one(s) carry edits Supabase does not have yet.\n\nPush first for a manifest that matches the server.",
+                    " modified one(s) carry edits Supabase does not have yet." + (iconPending ? "\nThe icon style change is not in Supabase yet either." : "") +
+                    "\n\nPush first for a manifest that matches the server.",
                     "Generate anyway", "Cancel")) return;
 
             try
@@ -998,7 +1074,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
                 int count = _data.Achievements.Count(a => a.Id > 0);
                 SetStatus("Wrote " + count + " achievement(s) (catalog v" + _data.CatalogVersion + ") to " + _data.ManifestPath + "." +
-                    (unsent + modified > 0 ? " Some local changes are not in Supabase yet." : ""), unsent + modified > 0 ? MessageType.Warning : MessageType.Info);
+                    (unsent + modified > 0 || iconPending ? " Some local changes are not in Supabase yet." : ""), unsent + modified > 0 || iconPending ? MessageType.Warning : MessageType.Info);
             }
             catch (Exception e)
             {
@@ -1083,6 +1159,9 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             if (string.IsNullOrEmpty(detail)) detail = Truncate(response.Body);
             string hint = response.Code == 401 || response.Code == 403 ? "\nCheck that the key is a service_role/secret key for this project." : "";
+            string raw = response.Body ?? "";
+            if (raw.Contains("icon_style") || raw.Contains("icon_background") || raw.Contains("icon_inset"))
+                hint += "\nThe database needs the 20260921000000_games_icon_style.sql migration (supabase db push).";
             return "Request failed (" + (response.Code > 0 ? "HTTP " + response.Code : response.Error) + "): " + detail + hint;
         }
 

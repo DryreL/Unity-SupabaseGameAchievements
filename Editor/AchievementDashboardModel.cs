@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Linq;
 
 namespace DryreLHub.SupabaseGameAchievements.Editor
@@ -167,6 +168,23 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         /// <summary>Folder that new achievements' <c>icon_path</c> is filled with (folder + "/" + key).</summary>
         public string IconFolder { get; set; } = DefaultIconFolder;
+
+        /// <summary>
+        /// Combined: each achievement's icon already contains its background (default). Layered: one shared
+        /// background for every achievement plus each achievement's own icon on top.
+        /// </summary>
+        [JsonConverter(typeof(StringEnumConverter))]
+        public AchievementIconStyle IconStyle { get; set; } = AchievementIconStyle.Combined;
+
+        /// <summary>Layered style: the shared background's icon path; empty means <c>&lt;IconFolder&gt;/background</c>.</summary>
+        public string IconBackground { get; set; } = "";
+
+        /// <summary>Layered style: margin around the icon inside the background, as a fraction of its size.</summary>
+        public float IconInset { get; set; } = AchievementCatalog.DefaultIconInset;
+
+        [JsonIgnore]
+        public string EffectiveIconBackground =>
+            string.IsNullOrWhiteSpace(IconBackground) ? IconPathFor("background") : IconBackground.Trim();
 
         /// <summary>
         /// String table used by every achievement that does not name its own table. Also the name of the
@@ -372,7 +390,63 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         public JObject BuildManifest()
         {
             var rows = new JArray(Achievements.Where(a => a.Id > 0).Select(a => a.ToRow()));
-            return AchievementManifestBuilder.Build(GameId, GameSlug, CatalogVersion, rows);
+            var icon = BuildGameIconPayload();
+            return AchievementManifestBuilder.Build(GameId, GameSlug, CatalogVersion, rows,
+                icon.Value<string>("icon_style"), icon.Value<string>("icon_background"), icon.Value<double?>("icon_inset"));
+        }
+
+        // ---- game-wide icon style (games.icon_style / icon_background / icon_inset) -----------------------
+
+        /// <summary>Serialized icon settings as of the last push/pull; null until the game row has been read or written.</summary>
+        public string GameIconSnapshot { get; set; }
+
+        /// <summary>What a PATCH of the game row carries: the style, and the background/inset only while layered.</summary>
+        public JObject BuildGameIconPayload()
+        {
+            bool layered = IconStyle == AchievementIconStyle.Layered;
+            return new JObject
+            {
+                ["icon_style"] = layered ? "layered" : "combined",
+                ["icon_background"] = layered ? StripExtension(EffectiveIconBackground) : null,
+                ["icon_inset"] = layered ? (JToken)Math.Round(Math.Min(0.45, Math.Max(0, IconInset)), 3) : JValue.CreateNull(),
+            };
+        }
+
+        // A game that was never written to has the database default (combined, nothing else).
+        private static string DefaultGameIconSnapshot() =>
+            new DashboardData { IconStyle = AchievementIconStyle.Combined }.BuildGameIconPayload().ToString(Formatting.None);
+
+        /// <summary>True when the local icon settings differ from what Supabase holds, so a push has something to send.</summary>
+        [JsonIgnore]
+        public bool IsGameIconPending =>
+            GameId > 0 && BuildGameIconPayload().ToString(Formatting.None) != (GameIconSnapshot ?? DefaultGameIconSnapshot());
+
+        public void MarkGameIconSynced() => GameIconSnapshot = BuildGameIconPayload().ToString(Formatting.None);
+
+        /// <summary>
+        /// Takes the icon settings from a fetched game row. Unsent local edits are kept (returns false), and a
+        /// row without the icon columns - a database that has not applied the migration - changes nothing.
+        /// </summary>
+        public bool ApplyGameIcon(JObject game)
+        {
+            if (!game.ContainsKey("icon_style")) return true;
+            if (IsGameIconPending) return false;
+
+            IconStyle = string.Equals(game.Value<string>("icon_style"), "layered", StringComparison.OrdinalIgnoreCase)
+                ? AchievementIconStyle.Layered : AchievementIconStyle.Combined;
+            string background = game.Value<string>("icon_background");
+            if (!string.IsNullOrEmpty(background)) IconBackground = background;
+            double? inset = game.Value<double?>("icon_inset");
+            if (inset.HasValue) IconInset = (float)Math.Round(inset.Value, 3);
+            MarkGameIconSynced();
+            return true;
+        }
+
+        private static string StripExtension(string path)
+        {
+            int dot = path.LastIndexOf('.');
+            int slash = Math.Max(path.LastIndexOf('/'), path.LastIndexOf('\\'));
+            return dot > slash ? path.Substring(0, dot) : path;
         }
 
         public static string SerializeManifest(JObject manifest) => JsonConvert.SerializeObject(manifest, Formatting.Indented) + "\n";

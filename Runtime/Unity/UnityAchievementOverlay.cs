@@ -89,11 +89,15 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [SerializeField] private CanvasGroup _canvasGroup;
         [SerializeField] private RectTransform _accent;
         [SerializeField] private Image _icon;
+        [Tooltip("Optional. Shared background drawn behind the icon in the Layered icon style. Created automatically behind the Icon if left empty.")]
+        [SerializeField] private Image _iconBackground;
         [SerializeField] private Text _header;
         [SerializeField] private Text _title;
         [SerializeField] private Text _description;
 
         private Vector2 _restingPosition;
+        private bool _iconRectCaptured;
+        private AchievementIconLayout.RectSpec _combinedIconRect;
 
         public virtual void SetContent(string header, string title, string description, Sprite icon)
         {
@@ -112,6 +116,55 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         public string DescriptionText => _description != null ? _description.text : null;
 
         public bool HasIcon => _icon != null && _icon.enabled;
+
+        public RectTransform IconRect => _icon != null ? _icon.rectTransform : null;
+
+        /// <summary>The shared background Image of the Layered icon style, or null while the Combined style is in use.</summary>
+        public Image IconBackground => _iconBackground != null && _iconBackground.gameObject.activeSelf ? _iconBackground : null;
+
+        /// <summary>
+        /// Switches between the Combined style (the icon image carries its own background) and the Layered style
+        /// (<paramref name="background"/> behind, the achievement icon shrunk by <paramref name="inset"/> on top).
+        /// Layered without a background sprite is Combined. Safe to call repeatedly.
+        /// </summary>
+        public virtual void ApplyIconStyle(AchievementIconStyle style, Sprite background, float inset)
+        {
+            if (_icon == null) return;
+            var iconRect = _icon.rectTransform;
+            if (!_iconRectCaptured)
+            {
+                _combinedIconRect = AchievementIconLayout.Capture(iconRect);
+                _iconRectCaptured = true;
+            }
+
+            if (style == AchievementIconStyle.Layered && background != null)
+            {
+                if (_iconBackground == null) _iconBackground = CreateIconBackground(iconRect, _combinedIconRect);
+                _iconBackground.sprite = background;
+                _iconBackground.enabled = true;
+                _iconBackground.gameObject.SetActive(true);
+                AchievementIconLayout.Apply(iconRect, AchievementIconLayout.Inset(_combinedIconRect, inset));
+            }
+            else
+            {
+                AchievementIconLayout.Apply(iconRect, _combinedIconRect);
+                if (_iconBackground != null) _iconBackground.gameObject.SetActive(false);
+            }
+        }
+
+        private static Image CreateIconBackground(RectTransform iconRect, AchievementIconLayout.RectSpec spec)
+        {
+            var go = new GameObject("IconBackground", typeof(RectTransform));
+            var rect = (RectTransform)go.transform;
+            rect.SetParent(iconRect.parent, false);
+            AchievementIconLayout.Apply(rect, spec);
+            rect.SetSiblingIndex(iconRect.GetSiblingIndex()); // directly behind the icon
+
+            var image = go.AddComponent<Image>();
+            image.preserveAspect = true;
+            image.raycastTarget = false;
+            return image;
+        }
 
         public Sprite Icon => _icon != null ? _icon.sprite : null;
 
@@ -308,6 +361,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private IAchievementIconProvider _icons;
         private IAchievementLocalizationProvider _localization;
         private AchievementToastView _view;
+        private AchievementIconStyle _iconStyle = AchievementIconStyle.Combined;
+        private Sprite _iconBackground;
+        private float _iconInset = AchievementCatalog.DefaultIconInset;
         private AudioSource _audio;
         private AchievementNotification _current;
         private Phase _phase;
@@ -323,6 +379,20 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         public int SoundPlayCount { get; private set; }
 
         public AchievementToastView View => _view;
+
+        public AchievementIconStyle IconStyle => _iconStyle;
+
+        /// <summary>
+        /// Chooses how toast icons are composed. <see cref="AchievementIconStyle.Layered"/> needs a
+        /// <paramref name="background"/> (the same image for every achievement); without one it stays Combined.
+        /// </summary>
+        public void ConfigureIconStyle(AchievementIconStyle style, Sprite background, float inset)
+        {
+            _iconStyle = style == AchievementIconStyle.Layered && background != null ? AchievementIconStyle.Layered : AchievementIconStyle.Combined;
+            _iconBackground = background;
+            _iconInset = inset;
+            if (_view != null) _view.ApplyIconStyle(_iconStyle, _iconBackground, _iconInset);
+        }
 
         public Font CustomFont
         {
@@ -533,6 +603,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 _view = AchievementToastView.CreateDefault(transform, _sortingOrder, _customFont, _accentColor, _cornerRadius, _headerFontSize, _titleFontSize, _descriptionFontSize);
             }
             _view.SetMargin(_margin);
+            _view.ApplyIconStyle(_iconStyle, _iconBackground, _iconInset);
             _view.gameObject.SetActive(false);
         }
 

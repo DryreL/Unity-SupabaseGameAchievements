@@ -20,6 +20,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_SUPABASE_URL = 'https://opvpbtcxxwagodhyzopx.supabase.co';
+const DEFAULT_ICON_INSET = 0.18; // AchievementCatalog.DefaultIconInset in the runtime
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function loadDotEnv() {
@@ -94,13 +95,26 @@ export function buildManifest(game, rows) {
     seenBits.add(entry.bitIndex);
   }
 
-  return {
+  const manifest = {
     formatVersion: 1,
     game: game.slug,
     gameId: game.id,
     catalogVersion: game.catalog_version,
-    achievements,
   };
+
+  // Game-wide icon style (games.icon_style). Only "layered" adds fields, so a Combined game's manifest is
+  // exactly what it always was. Same rules as AchievementManifestBuilder in the Editor.
+  if (String(game.icon_style || '').toLowerCase() === 'layered') {
+    manifest.iconStyle = 'layered';
+    if (game.icon_background) manifest.iconBackground = game.icon_background.replace(/\.[a-z0-9]+$/i, '');
+    if (typeof game.icon_inset === 'number') {
+      const inset = Math.round(Math.min(0.45, Math.max(0, game.icon_inset)) * 1000) / 1000;
+      if (Math.abs(inset - DEFAULT_ICON_INSET) > 0.0005) manifest.iconInset = inset;
+    }
+  }
+
+  manifest.achievements = achievements;
+  return manifest;
 }
 
 async function main() {
@@ -115,7 +129,15 @@ async function main() {
   const key = process.env.SUPABASE_EXPORT_KEY || readPublishableKey();
   if (!key) throw new Error('Add SUPABASE_PUBLISHABLE_KEY=sb_publishable_... to .env (or set SUPABASE_EXPORT_KEY for unreleased games).');
 
-  const games = await get(baseUrl, key, `games?slug=eq.${encodeURIComponent(slug)}&select=id,slug,catalog_version`);
+  // icon_* come from 20260921000000_games_icon_style.sql; a database without it answers 400, so retry without them.
+  const gamePath = (columns) => `games?slug=eq.${encodeURIComponent(slug)}&select=${columns}`;
+  let games;
+  try {
+    games = await get(baseUrl, key, gamePath('id,slug,catalog_version,icon_style,icon_background,icon_inset'));
+  } catch (error) {
+    if (!/-> 400/.test(error.message) || !/icon_/.test(error.message)) throw error;
+    games = await get(baseUrl, key, gamePath('id,slug,catalog_version'));
+  }
   if (games.length !== 1) throw new Error(`Game '${slug}' not found (inactive games need SUPABASE_EXPORT_KEY).`);
 
   const rows = await get(

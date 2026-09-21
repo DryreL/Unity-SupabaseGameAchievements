@@ -45,6 +45,12 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [Tooltip("Optional prefix for Resources.Load of achievement icons.")]
         [SerializeField] private string _iconResourcesPrefix = "";
         [SerializeField] private Sprite _fallbackIcon;
+        [Tooltip("Auto follows the manifest's iconStyle (Combined when it has none). Layered draws one shared background behind every achievement's own icon.")]
+        [SerializeField] private AchievementIconStyleSetting _iconStyle = AchievementIconStyleSetting.Auto;
+        [Tooltip("Layered style: the shared background sprite. Empty = load the manifest's iconBackground (or the path below) from Resources.")]
+        [SerializeField] private Sprite _iconBackground;
+        [Tooltip("Layered style: Resources path of the background, relative to the icon prefix, no extension. Empty = the manifest's iconBackground.")]
+        [SerializeField] private string _iconBackgroundResource = "";
 
         [Header("Diagnostics")]
         [SerializeField] private bool _verboseLogging;
@@ -78,6 +84,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             public string SharedSettingsFileName = "shared-settings.json";
             public string IconResourcesPrefix = "";
             public Sprite FallbackIcon;
+            public AchievementIconStyleSetting IconStyle = AchievementIconStyleSetting.Auto;
+            public Sprite IconBackground;
+            public string IconBackgroundResource = "";
             public AudioClip UnlockSound;
             public float ToastHoldDuration = 4.5f;
             public bool VerboseLogging;
@@ -105,6 +114,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             host._sharedSettingsFileName = config.SharedSettingsFileName;
             host._iconResourcesPrefix = config.IconResourcesPrefix;
             host._fallbackIcon = config.FallbackIcon;
+            host._iconStyle = config.IconStyle;
+            host._iconBackground = config.IconBackground;
+            host._iconBackgroundResource = config.IconBackgroundResource;
             host._verboseLogging = config.VerboseLogging;
             go.SetActive(true);
 
@@ -289,6 +301,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 {
                     if (_overlay == null) _overlay = gameObject.AddComponent<UnityAchievementOverlay>();
                     _overlay.Bind(_system.Notifications, new ResourcesAchievementIconProvider(_iconResourcesPrefix, _fallbackIcon), effectiveLocalization);
+                    ApplyIconStyle(catalog);
                 }
 
                 _logger.Info("Initialized " + catalog.Count + " achievements for '" + catalog.GameSlug + "' (catalog v" + catalog.CatalogVersion + ", " + _system.UnlockedCount + " unlocked, " + _system.PendingSyncCount + " pending sync).");
@@ -297,6 +310,34 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             {
                 _logger.Error("Achievement system failed to start; gameplay continues without it. " + e);
             }
+        }
+
+        /// <summary>Resolves the icon style (Inspector/Config override, else the manifest) and hands it to the overlay.</summary>
+        private void ApplyIconStyle(AchievementCatalog catalog)
+        {
+            var style = _iconStyle == AchievementIconStyleSetting.Combined ? AchievementIconStyle.Combined
+                : _iconStyle == AchievementIconStyleSetting.Layered ? AchievementIconStyle.Layered
+                : catalog.IconStyle;
+
+            Sprite background = null;
+            if (style == AchievementIconStyle.Layered)
+            {
+                background = _iconBackground;
+                if (background == null)
+                {
+                    string path = !string.IsNullOrEmpty(_iconBackgroundResource) ? _iconBackgroundResource : catalog.IconBackground;
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        int dot = path.LastIndexOf('.');
+                        int slash = Math.Max(path.LastIndexOf('/'), path.LastIndexOf('\\'));
+                        background = Resources.Load<Sprite>(_iconResourcesPrefix + (dot > slash ? path.Substring(0, dot) : path));
+                    }
+                    if (background == null)
+                        _logger.Warning("Layered icon style is on but its background '" + (path ?? "(none)") + "' was not found under Resources/" + _iconResourcesPrefix + "; using combined icons.");
+                }
+            }
+
+            _overlay.ConfigureIconStyle(style, background, catalog.IconInset);
         }
 
         private void Update()

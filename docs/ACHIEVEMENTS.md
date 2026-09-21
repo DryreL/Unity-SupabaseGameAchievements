@@ -106,7 +106,7 @@ not on the refresh path. Sessions live **in memory only**, never in the achievem
 
 | Table | Purpose | Notes |
 |---|---|---|
-| `games` | One row per game | `slug` unique; `catalog_version` bumped automatically on any catalog change; `is_active = false` hides an unreleased catalog from clients |
+| `games` | One row per game | `slug` unique; `catalog_version` bumped automatically on any catalog change; `is_active = false` hides an unreleased catalog from clients; `icon_style` (`combined` default / `layered`), `icon_background`, `icon_inset` describe how the unlock toast composes icons and are copied into the manifest (changing them bumps `catalog_version`) |
 | `achievements` | Canonical metadata | `UNIQUE(game_id, achievement_key)`, `UNIQUE(game_id, bit_index)`, `bit_index` 0–4095 |
 | `user_achievements` | Unlock records | `PRIMARY KEY (user_id, achievement_id)`, `unlocked_at` only. No game id, no metadata, no JSON |
 

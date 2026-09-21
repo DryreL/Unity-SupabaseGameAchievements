@@ -181,9 +181,17 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             SetStatus("Fetching game '" + _gameSlug + "'...", MessageType.Info);
 
             string key = string.IsNullOrEmpty(_exportKey) ? _supabasePublishableKey : _exportKey;
-            string url = _supabaseUrl.TrimEnd('/') + "/rest/v1/games?slug=eq." + UnityWebRequest.EscapeURL(_gameSlug) + "&select=id,slug,catalog_version";
-            Send(url, key, OnGamesResponse);
+            _legacyGameColumns = false;
+            Send(GamesUrl(), key, OnGamesResponse);
         }
+
+        // A database that has not applied 20260921000000_games_icon_style.sql has no icon_* columns; the export then
+        // simply carries no icon style (Combined), exactly as before.
+        private bool _legacyGameColumns;
+
+        private string GamesUrl() =>
+            _supabaseUrl.TrimEnd('/') + "/rest/v1/games?slug=eq." + UnityWebRequest.EscapeURL(_gameSlug) +
+            "&select=id,slug,catalog_version" + (_legacyGameColumns ? "" : ",icon_style,icon_background,icon_inset");
 
         private void Send(string url, string key, Action<UnityWebRequest> onDone)
         {
@@ -198,6 +206,14 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         private void OnGamesResponse(UnityWebRequest request)
         {
+            if (request.result != UnityWebRequest.Result.Success && request.responseCode == 400 && !_legacyGameColumns &&
+                (request.downloadHandler?.text ?? "").Contains("icon_"))
+            {
+                _legacyGameColumns = true;
+                Send(GamesUrl(), string.IsNullOrEmpty(_exportKey) ? _supabasePublishableKey : _exportKey, OnGamesResponse);
+                return;
+            }
+
             if (!TryReadSuccess(request, out string body)) return;
 
             JArray games;
@@ -228,10 +244,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             string url = _supabaseUrl.TrimEnd('/') + "/rest/v1/achievements?game_id=eq." + gameId +
                 "&select=id,achievement_key,bit_index,title,description,icon_path,icon_url,hidden,is_retired,display_order,localization_table,title_key,description_key" +
                 "&order=bit_index.asc";
-            Send(url, key, request2 => OnAchievementsResponse(request2, gameId, slug, catalogVersion));
+            var game = (JObject)games[0];
+            Send(url, key, request2 => OnAchievementsResponse(request2, gameId, slug, catalogVersion, game));
         }
 
-        private void OnAchievementsResponse(UnityWebRequest request, long gameId, string slug, int catalogVersion)
+        private void OnAchievementsResponse(UnityWebRequest request, long gameId, string slug, int catalogVersion, JObject game)
         {
             if (!TryReadSuccess(request, out string body)) return;
 
@@ -248,7 +265,8 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             try
             {
-                var manifest = AchievementManifestBuilder.Build(gameId, slug, catalogVersion, rows);
+                var manifest = AchievementManifestBuilder.Build(gameId, slug, catalogVersion, rows,
+                    game.Value<string>("icon_style"), game.Value<string>("icon_background"), game.Value<double?>("icon_inset"));
                 string json = JsonConvert.SerializeObject(manifest, Formatting.Indented) + "\n";
 
                 string fullPath = Path.IsPathRooted(_outputPath) ? _outputPath : Path.Combine(Directory.GetParent(Application.dataPath)!.FullName, _outputPath);
@@ -294,7 +312,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
     /// </summary>
     internal static class AchievementManifestBuilder
     {
-        public static JObject Build(long gameId, string slug, int catalogVersion, JArray rows)
+        /// <param name="iconStyle">games.icon_style; only "layered" adds manifest fields (a Combined manifest stays as it always was).</param>
+        /// <param name="iconBackground">games.icon_background, a Resources-relative path.</param>
+        /// <param name="iconInset">games.icon_inset; omitted when null or the runtime default.</param>
+        public static JObject Build(long gameId, string slug, int catalogVersion, JArray rows,
+            string iconStyle = null, string iconBackground = null, double? iconInset = null)
         {
             var achievements = new JArray();
             var seenBits = new System.Collections.Generic.HashSet<int>();
@@ -346,14 +368,27 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 achievements.Add(entry);
             }
 
-            return new JObject
+            var manifest = new JObject
             {
                 ["formatVersion"] = 1,
                 ["game"] = slug,
                 ["gameId"] = gameId,
                 ["catalogVersion"] = catalogVersion,
-                ["achievements"] = achievements,
             };
+
+            if (string.Equals(iconStyle, "layered", StringComparison.OrdinalIgnoreCase))
+            {
+                manifest["iconStyle"] = "layered";
+                if (!string.IsNullOrEmpty(iconBackground)) manifest["iconBackground"] = StripExtension(iconBackground);
+                if (iconInset.HasValue)
+                {
+                    double inset = Math.Min(0.45, Math.Max(0, iconInset.Value));
+                    if (Math.Abs(inset - AchievementCatalog.DefaultIconInset) > 0.0005) manifest["iconInset"] = Math.Round(inset, 3);
+                }
+            }
+
+            manifest["achievements"] = achievements;
+            return manifest;
         }
 
         private static string StripExtension(string path)

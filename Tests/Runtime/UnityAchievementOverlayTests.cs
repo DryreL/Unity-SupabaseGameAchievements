@@ -141,6 +141,55 @@ namespace DryreLHub.SupabaseGameAchievements.Unity.Tests
             Assert.AreEqual(0, _overlay.ShownCount);
         }
 
+        private static Sprite SolidSprite() => Sprite.Create(new Texture2D(4, 4), new Rect(0, 0, 4, 4), Vector2.one * 0.5f);
+
+        [UnityTest]
+        public IEnumerator Layered_icon_style_shows_the_shared_background_behind_a_smaller_icon()
+        {
+            Build();
+            var background = SolidSprite();
+            _overlay.ConfigureIconStyle(AchievementIconStyle.Layered, background, 0.2f);
+            _system.TryUnlock("a0");
+
+            yield return WaitUntil(() => _overlay.ShownCount == 1);
+
+            Assert.AreEqual(AchievementIconStyle.Layered, _overlay.IconStyle);
+            Assert.IsNotNull(_overlay.View.IconBackground);
+            Assert.AreSame(background, _overlay.View.IconBackground.sprite);
+            Assert.Less(_overlay.View.IconRect.sizeDelta.x, _overlay.View.IconBackground.rectTransform.sizeDelta.x, "the icon sits inside the background");
+        }
+
+        [UnityTest]
+        public IEnumerator Combined_icon_style_is_the_default_and_uses_no_background()
+        {
+            Build();
+            _system.TryUnlock("a0");
+
+            yield return WaitUntil(() => _overlay.ShownCount == 1);
+
+            Assert.AreEqual(AchievementIconStyle.Combined, _overlay.IconStyle);
+            Assert.IsNull(_overlay.View.IconBackground);
+        }
+
+        [UnityTest]
+        public IEnumerator Layered_without_a_background_stays_combined_and_switching_back_restores_the_icon_size()
+        {
+            Build();
+            _overlay.ConfigureIconStyle(AchievementIconStyle.Layered, null, 0.2f);
+            Assert.AreEqual(AchievementIconStyle.Combined, _overlay.IconStyle, "layered needs a background to draw");
+
+            _system.TryUnlock("a0");
+            yield return WaitUntil(() => _overlay.ShownCount == 1);
+            var combinedSize = _overlay.View.IconRect.sizeDelta;
+
+            _overlay.ConfigureIconStyle(AchievementIconStyle.Layered, SolidSprite(), 0.2f);
+            Assert.Less(_overlay.View.IconRect.sizeDelta.x, combinedSize.x);
+
+            _overlay.ConfigureIconStyle(AchievementIconStyle.Combined, null, 0.2f);
+            Assert.AreEqual(combinedSize, _overlay.View.IconRect.sizeDelta);
+            Assert.IsNull(_overlay.View.IconBackground);
+        }
+
         [UnityTest]
         public IEnumerator Missing_icon_falls_back_to_the_default_placeholder_icon()
         {

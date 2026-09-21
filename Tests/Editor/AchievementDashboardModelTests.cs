@@ -340,6 +340,181 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             }
         }
 
+        // ---- icon style ------------------------------------------------------------------------------------
+
+        [Test]
+        public void A_combined_manifest_has_no_icon_style_fields()
+        {
+            var data = Connected();
+            data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "a", 0)));
+
+            var manifest = data.BuildManifest();
+
+            Assert.IsFalse(manifest.ContainsKey("iconStyle"));
+            Assert.IsFalse(manifest.ContainsKey("iconBackground"));
+            Assert.IsFalse(manifest.ContainsKey("iconInset"));
+        }
+
+        [Test]
+        public void A_layered_manifest_defaults_the_background_to_the_icon_folder_and_reads_back()
+        {
+            var data = Connected();
+            data.IconStyle = AchievementIconStyle.Layered;
+            data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "a", 0)));
+
+            var catalog = AchievementCatalog.FromJson(DashboardData.SerializeManifest(data.BuildManifest()));
+
+            Assert.AreEqual(AchievementIconStyle.Layered, catalog.IconStyle);
+            Assert.AreEqual("images/background", catalog.IconBackground);
+            Assert.AreEqual(AchievementCatalog.DefaultIconInset, catalog.IconInset, 0.0001f);
+            Assert.IsFalse(data.BuildManifest().ContainsKey("iconInset"), "the default inset is left out");
+        }
+
+        [Test]
+        public void The_layered_background_follows_the_icon_folder_and_strips_the_extension()
+        {
+            var data = Connected();
+            data.IconStyle = AchievementIconStyle.Layered;
+            data.IconFolder = "badges";
+            data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "a", 0)));
+            Assert.AreEqual("badges/background", data.BuildManifest().Value<string>("iconBackground"));
+
+            data.IconBackground = "shared/frame.png";
+            data.IconInset = 0.3f;
+            var manifest = data.BuildManifest();
+
+            Assert.AreEqual("shared/frame", manifest.Value<string>("iconBackground"));
+            Assert.AreEqual(0.3, manifest.Value<double>("iconInset"), 0.0001);
+        }
+
+        [Test]
+        public void The_game_icon_payload_carries_background_and_inset_only_while_layered()
+        {
+            var data = Connected();
+            data.IconBackground = "shared/frame.png";
+            data.IconInset = 0.3f;
+
+            var combined = data.BuildGameIconPayload();
+            Assert.AreEqual("combined", combined.Value<string>("icon_style"));
+            StringAssert.Contains("\"icon_background\":null", combined.ToString(Newtonsoft.Json.Formatting.None));
+            StringAssert.Contains("\"icon_inset\":null", combined.ToString(Newtonsoft.Json.Formatting.None));
+
+            data.IconStyle = AchievementIconStyle.Layered;
+            var layered = data.BuildGameIconPayload();
+            Assert.AreEqual("layered", layered.Value<string>("icon_style"));
+            Assert.AreEqual("shared/frame", layered.Value<string>("icon_background"), "the extension is stripped like icon_path");
+            Assert.AreEqual(0.3, layered.Value<double>("icon_inset"), 0.0001);
+        }
+
+        [Test]
+        public void The_game_icon_is_pending_only_when_it_differs_from_the_server()
+        {
+            var data = Connected();
+            Assert.IsFalse(data.IsGameIconPending, "a fresh game is combined, which is the database default");
+
+            data.IconStyle = AchievementIconStyle.Layered;
+            Assert.IsTrue(data.IsGameIconPending);
+
+            data.MarkGameIconSynced();
+            Assert.IsFalse(data.IsGameIconPending);
+
+            data.IconInset = 0.25f;
+            Assert.IsTrue(data.IsGameIconPending);
+
+            data.IconInset = AchievementCatalog.DefaultIconInset;
+            data.IconBackground = "";
+            Assert.IsFalse(data.IsGameIconPending, "an equivalent value is not a change");
+        }
+
+        [Test]
+        public void An_unconnected_game_never_has_a_pending_icon_change()
+        {
+            var data = new DashboardData { IconStyle = AchievementIconStyle.Layered };
+            Assert.IsFalse(data.IsGameIconPending, "there is no game row to send it to yet");
+        }
+
+        [Test]
+        public void Pulling_the_game_row_takes_the_server_icon_style()
+        {
+            var data = Connected();
+
+            bool applied = data.ApplyGameIcon(new JObject { ["icon_style"] = "layered", ["icon_background"] = "images/bg", ["icon_inset"] = 0.3 });
+
+            Assert.IsTrue(applied);
+            Assert.AreEqual(AchievementIconStyle.Layered, data.IconStyle);
+            Assert.AreEqual("images/bg", data.IconBackground);
+            Assert.AreEqual(0.3f, data.IconInset, 0.0001f);
+            Assert.IsFalse(data.IsGameIconPending);
+        }
+
+        [Test]
+        public void Pulling_keeps_an_unsent_local_icon_change()
+        {
+            var data = Connected();
+            data.IconStyle = AchievementIconStyle.Layered;
+
+            bool applied = data.ApplyGameIcon(new JObject { ["icon_style"] = "combined", ["icon_background"] = null, ["icon_inset"] = null });
+
+            Assert.IsFalse(applied);
+            Assert.AreEqual(AchievementIconStyle.Layered, data.IconStyle);
+            Assert.IsTrue(data.IsGameIconPending);
+        }
+
+        [Test]
+        public void A_game_row_without_the_icon_columns_changes_nothing()
+        {
+            var data = Connected();
+            data.IconStyle = AchievementIconStyle.Layered;
+            data.MarkGameIconSynced();
+
+            Assert.IsTrue(data.ApplyGameIcon(new JObject { ["id"] = 7 }));
+            Assert.AreEqual(AchievementIconStyle.Layered, data.IconStyle);
+        }
+
+        [Test]
+        public void The_manifest_builder_takes_the_game_icon_style_from_the_game_row()
+        {
+            var rows = new JArray(ServerRow(1, "a", 0));
+
+            var none = AchievementManifestBuilder.Build(7, "g", 1, rows);
+            var combined = AchievementManifestBuilder.Build(7, "g", 1, rows, "combined", null, null);
+            var layered = AchievementManifestBuilder.Build(7, "g", 1, rows, "layered", "images/bg.png", 0.3);
+            var defaultInset = AchievementManifestBuilder.Build(7, "g", 1, rows, "layered", "images/bg", 0.18);
+
+            Assert.IsFalse(none.ContainsKey("iconStyle"));
+            Assert.IsFalse(combined.ContainsKey("iconStyle"));
+            Assert.AreEqual("layered", layered.Value<string>("iconStyle"));
+            Assert.AreEqual("images/bg", layered.Value<string>("iconBackground"));
+            Assert.AreEqual(0.3, layered.Value<double>("iconInset"), 0.0001);
+            Assert.IsFalse(defaultInset.ContainsKey("iconInset"));
+            Assert.AreEqual("achievements", layered.Properties().Last().Name, "the achievements array stays last, as the exporters always wrote it");
+        }
+
+        [Test]
+        public void The_icon_style_is_saved_readably_and_old_files_default_to_combined()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "dashboard-" + System.Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                var data = Connected();
+                data.IconStyle = AchievementIconStyle.Layered;
+                data.IconBackground = "x/bg";
+                data.Save(path);
+
+                StringAssert.Contains("\"IconStyle\": \"Layered\"", File.ReadAllText(path));
+                var loaded = DashboardData.Load(path);
+                Assert.AreEqual(AchievementIconStyle.Layered, loaded.IconStyle);
+                Assert.AreEqual("x/bg", loaded.IconBackground);
+
+                File.WriteAllText(path, "{ \"FormatVersion\": 1, \"Achievements\": [] }");
+                Assert.AreEqual(AchievementIconStyle.Combined, DashboardData.Load(path).IconStyle);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
         // ---- persistence -----------------------------------------------------------------------------------
 
         [Test]

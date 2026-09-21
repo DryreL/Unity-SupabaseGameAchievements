@@ -218,6 +218,25 @@ path** (no extension — the historical/default behavior) or a **full URL** (`ht
 launcher repo and `AchievementCatalogExporterWindow` here) only strip the extension for local paths;
 a URL keeps it. `ResourcesAchievementIconProvider` picks the mode per-achievement automatically.
 
+**Icon style (Combined / Layered)** is a game-wide presentation setting stored on `public.games`
+(`icon_style` combined|layered, `icon_background`, `icon_inset`; `20260921000000_games_icon_style.sql`, which
+also bumps `catalog_version` when they change) and carried by the **manifest** (`iconStyle`, `iconBackground`,
+`iconInset`, parsed into `AchievementCatalog.IconStyle` / `IconBackground` / `IconInset`; unknown style =
+Combined; only "layered" writes fields, so a Combined manifest is unchanged). All three exporters write it
+identically - `AchievementManifestBuilder.Build` (dashboard + `AchievementCatalogExporterWindow`) and
+`buildManifest` in `scripts/export-achievement-catalog.mjs`; keep them in step. The dashboard tracks it
+like an achievement: `DashboardData.GameIconSnapshot` / `IsGameIconPending`, sent by the toolbar Push as a
+PATCH of the game row, read by Pull (`ApplyGameIcon`, unsent local edits win). Every reader retries without
+the icon_* columns when PostgREST answers 400 for them, so a database that has not run the migration keeps
+working as Combined (the migration is a file in this repo until someone runs `supabase db push`).
+`UnityAchievementManager.ApplyIconStyle`
+resolves Inspector/Config override (`AchievementIconStyleSetting`, Auto = follow manifest), loads the background
+from Resources (`_iconResourcesPrefix` + path) and calls `UnityAchievementOverlay.ConfigureIconStyle`, which
+makes `AchievementToastView.ApplyIconStyle` create an `IconBackground` Image directly behind the icon (or use
+the prefab's own) and shrink the icon via `AchievementIconLayout.Inset` (pure rect math, unit-tested; keeps
+the centre for any pivot). It is re-applied on every `InitializeWithCatalog`, so a Remote Config catalog can
+switch style. Layered without a resolvable background degrades to Combined with a warning.
+
 A URL icon is downloaded via `UnityWebRequestTexture` **asynchronously**, never blocking the unlock or
 the toast: `IAchievementIconProvider.GetIcon` returns a fallback immediately with `isFinal = false`,
 `UnityAchievementOverlay` shows the toast right away and swaps the real icon in once
@@ -352,6 +371,8 @@ disrupt the user's own Editor session.
   been pushed.
 - `<YourGameName>` references this package by **git URL**, not `file:`, so local edits here need a
   push (and the consuming project needs to re-resolve packages) before they take effect there.
+- `20260921000000_games_icon_style.sql` (games.icon_style/icon_background/icon_inset) exists as a file only until
+  someone runs `supabase db push`; everything that reads those columns tolerates its absence.
 - Live database (2026-09-20/21): `20260920000000_patreon_identity.sql` was applied through the SQL editor and
   the improved `patreon-middleware` deployed (identical in this repo and the plugin). The migration
   `20260918000000_patreon_profiles.sql` is a stub. Duplicate accounts from the old default-domain bug were
