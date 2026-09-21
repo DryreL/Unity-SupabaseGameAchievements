@@ -194,6 +194,37 @@ consumers (raw API, Patreon-specific turnkey, defensive/UI-first).
 
 ---
 
+## 7b. Conditional achievements (`AchievementRules`)
+
+The database and the manifest only know "unlocked"; counters/conditions are **game code**, deliberately (targets
+are not a column; adding one would need a migration plus a manifest field - see the offer made when this was
+built). `Runtime/Core/AchievementRules.cs` (no Unity dependency) is the helper: a fluent registry of rules over
+string events - `UnlockOn`, `Counter` (persisted through `IAchievementProgressStore`, stops once unlocked,
+clamped, never decreases), `Run` (start/fail/complete, in-session only), `On` (custom) - and `Report(event,
+amount)`. It is constructed from `unlock` / `isUnlocked` delegates (`ForManager` binds the static
+`AchievementManager`), a rule that throws is logged and skipped. Unity side: `AchievementRulesBehaviour`
+(abstract, `Configure(rules)`, static `Report`, UnityEvent-friendly `ReportEvent(string)`, flushes the
+store on pause/quit) and `PlayerPrefsAchievementProgressStore` (per-device; `DelegateAchievementProgressStore`
+hooks a game's own save). Sample: `Samples~/ExampleIntegration/ExampleAchievementRules.cs`. Tests:
+`Tests/Editor/AchievementRulesTests.cs` (the MonoBehaviour is compile-checked only).
+
+### 7c. The dashboard's Rules tab (no-code rules) - no database involved
+
+Authored rules live in the dashboard file (`DashboardData.Rules`, `DashboardRule` + `DashboardBinding`) and are
+published as `Assets/Resources/Achievements/rules.json` (`AchievementRuleSet` in `Runtime/Core`, parsed and
+applied by `AchievementRulesRunner`, which `UnityAchievementManager.EnsureRulesRunner` adds when the file exists).
+A rule's id (`r` + 6 hex) is permanent: the events are `id` (Unlock/Counter) or `id:start|fail|complete` (Run),
+so editing a rule never touches a scene. Scene hookups are `AchievementTrigger` (wired to a UnityEvent with
+`UnityEventTools.AddVoidPersistentListener`) or `AchievementMethodWatcher` (polls a bool member via
+`AchievementConditionReader`, fires on the rising edge), both stamped with the binding id so
+`AchievementRuleWiring.Scan/Unbind` can find them (`FindObjectsByType`, so only OPEN scenes). Everything reports
+through the static `AchievementEvents` hub, which every `AchievementRules` instance (the runner's and any
+`AchievementRulesBehaviour`) registers with. Editor code: `AchievementDashboardWindow.Rules.cs` (partial) and
+`AchievementRuleWiring.cs`. Verified: the model/Core/reader logic by unit tests; the scene wiring (Undo, prefab
+overrides, `UnityEventTools`) and the IMGUI were only compile-checked, never run in a live Editor. Known limits:
+no editing of a hookup's amount (unbind and re-add), a Condition can be stripped by IL2CPP, two rule sets that
+both count the same achievement would double-count (`AchievementRuleSet` rejects it within one file only).
+
 ## 8. C# SDK layout
 
 | Path | Assembly | Notes |

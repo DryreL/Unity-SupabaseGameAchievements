@@ -202,6 +202,173 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             }
         }
 
+        // ---- rules -----------------------------------------------------------------------------------------
+
+        private static DashboardData WithAchievement(string key = "first_blood", bool retired = false)
+        {
+            var data = Connected();
+            var a = DashboardAchievement.FromRow(ServerRow(1, key, 0));
+            a.Retired = retired;
+            data.Achievements.Add(a);
+            return data;
+        }
+
+        [Test]
+        public void New_rules_get_unique_permanent_ids()
+        {
+            var data = Connected();
+
+            var ids = Enumerable.Range(0, 50).Select(_ => data.AddRule().Id).ToList();
+
+            Assert.AreEqual(50, ids.Distinct().Count());
+            Assert.IsTrue(ids.All(id => id.StartsWith("r") && id.Length == 7));
+        }
+
+        [Test]
+        public void A_rule_for_an_existing_active_achievement_is_valid()
+        {
+            var data = WithAchievement();
+            var rule = data.AddRule("first_blood");
+
+            Assert.IsEmpty(data.ValidateRule(rule));
+        }
+
+        [Test]
+        public void A_rule_needs_an_achievement_that_exists_and_is_not_retired()
+        {
+            var data = WithAchievement();
+            Assert.IsNotEmpty(data.ValidateRule(data.AddRule("")));
+            Assert.IsNotEmpty(data.ValidateRule(data.AddRule("typo")));
+
+            var retired = WithAchievement(retired: true);
+            Assert.IsNotEmpty(retired.ValidateRule(retired.AddRule("first_blood")));
+        }
+
+        [Test]
+        public void A_counter_needs_a_target_and_two_counters_cannot_share_an_achievement()
+        {
+            var data = WithAchievement();
+            var a = data.AddRule("first_blood");
+            a.Kind = AchievementRuleKind.Counter;
+            a.Target = 0;
+            Assert.IsNotEmpty(data.ValidateRule(a));
+
+            a.Target = 3;
+            Assert.IsEmpty(data.ValidateRule(a));
+
+            var b = data.AddRule("first_blood");
+            b.Kind = AchievementRuleKind.Counter;
+            b.Target = 9;
+            Assert.IsNotEmpty(data.ValidateRule(a), "both counters are flagged");
+            Assert.IsNotEmpty(data.ValidateRule(b));
+
+            b.Kind = AchievementRuleKind.Unlock;
+            Assert.IsEmpty(data.ValidateRule(a), "an unlock rule and a counter may share an achievement");
+        }
+
+        [Test]
+        public void The_rule_set_contains_only_valid_rules_and_reports_the_rest()
+        {
+            var data = WithAchievement();
+            var good = data.AddRule("first_blood");
+            data.AddRule("typo");
+
+            var set = data.BuildRuleSet(out var skipped);
+
+            Assert.AreEqual(1, set.Rules.Count);
+            Assert.AreEqual(good.Id, set.Rules[0].Id);
+            Assert.AreEqual(1, skipped.Count);
+        }
+
+        [Test]
+        public void The_written_rules_json_uses_the_dashboard_rule_ids_for_the_event_names()
+        {
+            var data = WithAchievement();
+            var rule = data.AddRule("first_blood");
+            rule.Kind = AchievementRuleKind.Counter;
+            rule.Target = 5;
+
+            var parsed = AchievementRuleSet.FromJson(data.BuildRulesJson(out _));
+
+            Assert.AreEqual(rule.EventName("trigger"), parsed.Rules[0].EventName());
+            Assert.AreEqual(5, parsed.Rules[0].Target);
+        }
+
+        [Test]
+        public void Renaming_an_achievement_key_keeps_its_rules_attached()
+        {
+            var data = Connected();
+            var draft = data.AddNew();
+            data.RenameKey(draft, "clicked_link");
+            var rule = data.AddRule("clicked_link");
+
+            data.RenameKey(draft, "clicked_a_link");
+
+            Assert.AreEqual("clicked_a_link", rule.AchievementKey);
+        }
+
+        [Test]
+        public void A_kind_change_that_would_orphan_the_hookups_is_refused()
+        {
+            var rule = new DashboardRule { Id = "r1", Kind = AchievementRuleKind.Unlock };
+
+            Assert.IsTrue(rule.CanChangeKindTo(AchievementRuleKind.Run), "no hookups yet, anything goes");
+
+            rule.Bindings.Add(new DashboardBinding { Role = "trigger" });
+            Assert.IsTrue(rule.CanChangeKindTo(AchievementRuleKind.Counter), "unlock and counter share one event");
+            Assert.IsFalse(rule.CanChangeKindTo(AchievementRuleKind.Run), "a run listens to three different events");
+
+            rule.Kind = AchievementRuleKind.Run;
+            Assert.IsFalse(rule.CanChangeKindTo(AchievementRuleKind.Unlock));
+        }
+
+        [Test]
+        public void The_same_hookup_is_recognised_so_it_cannot_be_added_twice()
+        {
+            var a = new DashboardBinding { Role = "trigger", ScenePath = "Assets/Level1.unity", ObjectPath = "Canvas/Button", ComponentType = "Button", Member = "onClick" };
+            var b = new DashboardBinding { Role = "trigger", ScenePath = "Assets/Level1.unity", ObjectPath = "Canvas/Button", ComponentType = "Button", Member = "onClick" };
+            var otherScene = new DashboardBinding { Role = "trigger", ScenePath = "Assets/Level2.unity", ObjectPath = "Canvas/Button", ComponentType = "Button", Member = "onClick" };
+            var otherRole = new DashboardBinding { Role = "fail", ScenePath = "Assets/Level1.unity", ObjectPath = "Canvas/Button", ComponentType = "Button", Member = "onClick" };
+
+            Assert.IsTrue(a.SameHookup(b));
+            Assert.IsFalse(a.SameHookup(otherScene));
+            Assert.IsFalse(a.SameHookup(otherRole));
+            Assert.AreNotEqual(a.Id, b.Id, "every hookup has its own id");
+        }
+
+        [Test]
+        public void Rules_and_hookups_are_saved_and_old_files_have_no_rules()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "dashboard-" + System.Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                var data = WithAchievement();
+                var rule = data.AddRule("first_blood");
+                rule.Kind = AchievementRuleKind.Run;
+                rule.Bindings.Add(new DashboardBinding { Role = "complete", Source = DashboardBindingSource.Condition, ScenePath = "Assets/L.unity", ObjectPath = "Boss", ComponentType = "BossAI", Member = "IsDefeated", Amount = 2 });
+                data.RulesPath = "Assets/Resources/Custom/rules.json";
+                data.Save(path);
+
+                StringAssert.Contains("\"Kind\": \"Run\"", File.ReadAllText(path));
+                var loaded = DashboardData.Load(path);
+
+                Assert.AreEqual("Assets/Resources/Custom/rules.json", loaded.RulesPath);
+                Assert.AreEqual(AchievementRuleKind.Run, loaded.Rules[0].Kind);
+                Assert.AreEqual(DashboardBindingSource.Condition, loaded.Rules[0].Bindings[0].Source);
+                Assert.AreEqual("IsDefeated", loaded.Rules[0].Bindings[0].Member);
+                Assert.AreEqual(rule.Bindings[0].Id, loaded.Rules[0].Bindings[0].Id);
+
+                File.WriteAllText(path, "{ \"FormatVersion\": 1, \"Achievements\": [] }");
+                var old = DashboardData.Load(path);
+                Assert.IsEmpty(old.Rules);
+                Assert.AreEqual("Assets/Resources/Achievements/rules.json", old.RulesPath);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
         // ---- localization ----------------------------------------------------------------------------------
 
         private static DashboardAchievement Named(string key, string title, string description) =>

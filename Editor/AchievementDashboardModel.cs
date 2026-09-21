@@ -135,6 +135,75 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private static string NullIfEmpty(string value) => string.IsNullOrEmpty(value) ? null : value;
     }
 
+    internal enum DashboardBindingSource
+    {
+        /// <summary>A UnityEvent (a Button's onClick, a Toggle, or an event field of one of your scripts) calls a trigger.</summary>
+        UnityEvent,
+
+        /// <summary>A bool method/property/field of one of your scripts is watched and fires when it turns true.</summary>
+        Condition,
+    }
+
+    /// <summary>
+    /// One scene hookup of a rule: where the trigger lives. The scene itself holds the truth (an
+    /// <c>AchievementTrigger</c>/<c>AchievementMethodWatcher</c> carrying this record's <see cref="Id"/>); this record is
+    /// what the dashboard shows and uses to find and remove it again.
+    /// </summary>
+    internal sealed class DashboardBinding
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString("N").Substring(0, 8);
+
+        /// <summary>"trigger" for Unlock/Counter rules; "start", "fail" or "complete" for Run rules.</summary>
+        public string Role { get; set; } = "trigger";
+
+        [JsonConverter(typeof(StringEnumConverter))]
+        public DashboardBindingSource Source { get; set; }
+
+        public string ScenePath { get; set; } = "";
+        public string ObjectPath { get; set; } = "";
+        public string ComponentType { get; set; } = "";
+
+        /// <summary>The UnityEvent field/property, or the bool member.</summary>
+        public string Member { get; set; } = "";
+
+        /// <summary>How much each trigger counts for (counter rules).</summary>
+        public int Amount { get; set; } = 1;
+
+        public string Describe() => ObjectPath + " . " + ComponentType + " . " + Member;
+
+        public bool SameHookup(DashboardBinding other) =>
+            other != null && Role == other.Role && Source == other.Source && ScenePath == other.ScenePath &&
+            ObjectPath == other.ObjectPath && ComponentType == other.ComponentType && Member == other.Member;
+    }
+
+    /// <summary>One authored rule: an achievement, how it unlocks, and the scene hookups that drive it.</summary>
+    internal sealed class DashboardRule
+    {
+        public string Id { get; set; } = "";
+        public string AchievementKey { get; set; } = "";
+
+        [JsonConverter(typeof(StringEnumConverter))]
+        public AchievementRuleKind Kind { get; set; } = AchievementRuleKind.Unlock;
+
+        /// <summary>Counter rules: the number of triggers that unlocks the achievement.</summary>
+        public int Target { get; set; } = 5;
+
+        public List<DashboardBinding> Bindings { get; set; } = new List<DashboardBinding>();
+
+        [JsonIgnore] public bool Expanded { get; set; }
+
+        [JsonIgnore] public IReadOnlyList<string> Roles => AchievementRuleDefinition.RolesFor(Kind);
+
+        public string EventName(string role = null) => AchievementRuleDefinition.EventNameFor(Id, Kind, role);
+
+        /// <summary>
+        /// Unlock and Counter rules listen to the same event, so switching between them keeps every binding valid;
+        /// a Run rule has three events, so its bindings would have to be redone.
+        /// </summary>
+        public bool CanChangeKindTo(AchievementRuleKind kind) =>
+            Bindings.Count == 0 || AchievementRuleDefinition.RolesFor(kind).SequenceEqual(Roles);
+    }
+
     /// <summary>The dashboard's saved state: one game's working copy of its catalog.</summary>
     internal sealed class DashboardData
     {
@@ -165,6 +234,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         public int CatalogVersion { get; set; }
 
         public string ManifestPath { get; set; } = DefaultManifestPath;
+
+        public const string DefaultRulesPath = "Assets/Resources/Achievements/rules.json";
+
+        /// <summary>Where the Rules tab writes <c>rules.json</c>, which the game loads from Resources automatically.</summary>
+        public string RulesPath { get; set; } = DefaultRulesPath;
+
+        public List<DashboardRule> Rules { get; set; } = new List<DashboardRule>();
 
         /// <summary>Folder that new achievements' <c>icon_path</c> is filled with (folder + "/" + key).</summary>
         public string IconFolder { get; set; } = DefaultIconFolder;
@@ -205,6 +281,8 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 throw new InvalidDataException(
                     "The dashboard file uses format " + data.FormatVersion + ", newer than the supported " + CurrentFormatVersion + ".");
             data.Achievements = data.Achievements ?? new List<DashboardAchievement>();
+            data.Rules = data.Rules ?? new List<DashboardRule>();
+            foreach (var rule in data.Rules) rule.Bindings = rule.Bindings ?? new List<DashboardBinding>();
             return data;
         }
 
@@ -244,8 +322,62 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             if (achievement.IconPath == IconPathFor(achievement.Key)) achievement.IconPath = IconPathFor(newKey);
             if (achievement.TitleKey == DefaultTitleKey(achievement.Key)) achievement.TitleKey = DefaultTitleKey(newKey);
             if (achievement.DescriptionKey == DefaultDescriptionKey(achievement.Key)) achievement.DescriptionKey = DefaultDescriptionKey(newKey);
+            foreach (var rule in Rules.Where(r => r.AchievementKey == achievement.Key)) rule.AchievementKey = newKey; // rules follow the rename
             achievement.Key = newKey;
         }
+
+        // ---- rules ------------------------------------------------------------------------------------------
+
+        /// <summary>Adds a rule with a fresh, permanent id (its event names derive from it and never change).</summary>
+        public DashboardRule AddRule(string achievementKey = "")
+        {
+            var taken = new HashSet<string>(Rules.Select(r => r.Id), StringComparer.Ordinal);
+            string id;
+            do id = "r" + Guid.NewGuid().ToString("N").Substring(0, 6); while (!taken.Add(id));
+
+            var rule = new DashboardRule { Id = id, AchievementKey = achievementKey ?? "", Expanded = true };
+            Rules.Add(rule);
+            return rule;
+        }
+
+        /// <summary>Problems that stop a rule from being written to rules.json.</summary>
+        public List<string> ValidateRule(DashboardRule rule)
+        {
+            var errors = new List<string>();
+            var achievement = Achievements.FirstOrDefault(a => a.Key == rule.AchievementKey);
+
+            if (string.IsNullOrEmpty(rule.AchievementKey)) errors.Add("Choose the achievement this rule unlocks.");
+            else if (achievement == null) errors.Add("The achievement '" + rule.AchievementKey + "' is not in the dashboard.");
+            else if (achievement.Retired) errors.Add("'" + rule.AchievementKey + "' is retired and can no longer be unlocked.");
+
+            if (rule.Kind == AchievementRuleKind.Counter)
+            {
+                if (rule.Target < 1) errors.Add("A counter's target must be at least 1.");
+                if (Rules.Any(o => !ReferenceEquals(o, rule) && o.Kind == AchievementRuleKind.Counter && o.AchievementKey == rule.AchievementKey && !string.IsNullOrEmpty(rule.AchievementKey)))
+                    errors.Add("Another counter rule already counts for '" + rule.AchievementKey + "'; two would share one saved value.");
+            }
+            return errors;
+        }
+
+        /// <summary>Builds the rule set the game runs from every valid rule; the invalid ones are reported in <paramref name="skipped"/>.</summary>
+        public AchievementRuleSet BuildRuleSet(out List<string> skipped)
+        {
+            skipped = new List<string>();
+            var definitions = new List<AchievementRuleDefinition>();
+            foreach (var rule in Rules)
+            {
+                var errors = ValidateRule(rule);
+                if (errors.Count > 0)
+                {
+                    skipped.Add(string.IsNullOrEmpty(rule.AchievementKey) ? rule.Id : rule.AchievementKey + ": " + errors[0]);
+                    continue;
+                }
+                definitions.Add(new AchievementRuleDefinition(rule.Id, rule.AchievementKey, rule.Kind, rule.Target));
+            }
+            return new AchievementRuleSet(definitions);
+        }
+
+        public string BuildRulesJson(out List<string> skipped) => BuildRuleSet(out skipped).ToJson();
 
         // ---- localization ---------------------------------------------------------------------------------
 

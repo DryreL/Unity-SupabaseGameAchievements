@@ -369,6 +369,86 @@ yourself — `visibility` is driven every frame from 0 (hidden) to 1 (fully show
 `Time.unscaledDeltaTime` (works while the game is paused). Sound and queuing stay exactly the same
 either way; those live on `UnityAchievementOverlay`, not on the view.
 
+## Conditional achievements: counters, quests, "without failing"
+
+### From the dashboard, with no code (the Rules tab)
+
+**Tools → DryreL Hub → Supabase Game Achievements → Achievement Dashboard → Rules.** A rule is an achievement
+plus *how* it unlocks, plus the places in your scenes that drive it:
+
+| Rule | Behaves like |
+|---|---|
+| **Unlock when triggered** | a click / event unlocks it |
+| **Counter (unlock after N triggers)** | "click 5 times", "defeat 100 enemies"; the count is saved |
+| **Flawless run (start / fail / complete)** | "finish the quest without dying": completing unlocks only if *fail* did not happen since *start* |
+
+1. **+ Add Rule**, pick the achievement and the rule type (a counter also gets its target).
+2. Under *Trigger* (or *Start / Fail / Complete*) **Add a hookup**: drag the object from the Hierarchy of an
+   **open scene** into *Scene object* (or press *Use selection*), pick the component, then either
+   - **UnityEvent**: a Button's `onClick`, a Toggle, or any `UnityEvent` field of one of your own scripts
+     (a public or `[SerializeField]` one), or
+   - **Condition**: a `bool` method / property / field of your own script (`public bool BossDefeated => ...;`).
+     The rule fires each time it turns true (polled 5 times a second).
+   Press **Bind**. That adds an `AchievementTrigger` (wired to the event) or an `AchievementMethodWatcher`
+   next to the object, recorded in Undo. **Save the scene** to keep it.
+3. **Write rules.json** (the toolbar says when it is out of date). It goes to
+   `Assets/Resources/Achievements/rules.json`, and `UnityAchievementManager` loads it by itself: there is
+   nothing to put in a scene and no code to write. Each level's buttons are hooked in that level's scene.
+
+Every hookup row shows whether its trigger is *in scene*, *missing* (deleted by hand) or in a *closed scene*
+(with an *Open scene* button); *Unbind* removes the trigger and its event listener again. Deleting a rule
+removes its triggers from the open scenes. A rule's event name (e.g. `r3fa2c1`) is permanent and shown on the
+card, so from code you can still report it: `AchievementEvents.Report("r3fa2c1")`. Rules and hookups are saved
+in the dashboard file; the database is not involved.
+
+Things to know: only *open* scenes can be edited (objects of a prefab asset cannot be picked: open the prefab or
+the scene); counter progress is saved in `PlayerPrefs` (per device); counter targets are in `rules.json`, so a
+change ships with a build; a Condition looks the member up by name at runtime, so with IL2CPP code stripping
+mark it `[UnityEngine.Scripting.Preserve]`; a plain `void` method cannot be hooked without code: give the
+script a `UnityEvent` (or a bool) to hook into, or call `AchievementEvents.Report("...")` from it.
+
+### In code (`AchievementRules`)
+
+`AchievementManager.TryUnlock("key")` is all the package needs, but it only says "unlocked". For anything
+with a condition, keep the conditions in **one place** with `AchievementRules` (import *Example
+Integration* for a ready-made `ExampleAchievementRules`). Gameplay only reports what happened; the rules
+decide what that unlocks:
+
+```csharp
+public sealed class MyGameAchievementRules : AchievementRulesBehaviour   // put it in your first scene
+{
+    protected override void Configure(AchievementRules rules)
+    {
+        rules
+            .Counter("clicked_link_5_times", target: 5, onEvent: "link_clicked")     // click 5 times
+            .Counter("centurion", target: 100, onEvent: "enemy_killed")              // 100 kills
+            .UnlockOn("opened_shop", onEvent: "shop_opened")                         // one event, one achievement
+            .Run("flawless_quest", startEvent: "quest_started",                      // complete without failing
+                 failEvent: "player_died", completeEvent: "quest_done")
+            .On("score_submitted", e => { if (e.Amount >= 10000) e.Unlock("high_scorer"); });   // any condition
+    }
+}
+
+// gameplay:
+AchievementRulesBehaviour.Report("enemy_killed");
+AchievementRulesBehaviour.Report("gold_collected", 250);   // counts for 250
+```
+
+- **No code needed for buttons:** a Button's OnClick can call the component's `ReportEvent(string)` with the
+  event name typed in the Inspector - the same way the proxy is bound today.
+- **Counters are saved** (PlayerPrefs by default: per device, not per account). To keep them in your own save
+  system, override `CreateProgressStore()` and return a `DelegateAchievementProgressStore(get, set)`. Read
+  progress for a UI with `Rules.GetProgress("centurion")` (`"37/100"`, `.Fraction`).
+- **A counter stops once the achievement is unlocked**, never counts backwards, and clamps at the target.
+- **`Run` = success only.** Completing unlocks only if the fail event did not happen since the start; a failed
+  attempt unlocks nothing (achievements can never be revoked) and the next start is a fresh attempt. Runs last
+  for the session, they are not saved.
+- A rule that throws is logged and skipped; it never breaks gameplay. `AchievementRules` itself has no Unity
+  dependency (`Runtime/Core`), so it also works with any engine or with your own hook-up:
+  `new AchievementRules(unlock, isUnlocked, progressStore)`.
+
+Counter targets live in code, not in the database: changing "5 clicks" to "10" needs a new build.
+
 ## Editor tools
 
 All under **Tools → DryreL Hub → Supabase Game Achievements**:

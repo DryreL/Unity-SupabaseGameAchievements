@@ -22,7 +22,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
     /// Editor-only and needs a service/secret key (clients have no write grants, on purpose); the key is kept
     /// for the session and never written to disk. Hard deletes stay in the Manage Achievements window.
     /// </remarks>
-    public sealed class AchievementDashboardWindow : EditorWindow
+    public sealed partial class AchievementDashboardWindow : EditorWindow
     {
         private const string PrefsPrefix = "DryreLHub.Achievements.Dashboard.";
         private const string DefaultDataPath = "ProjectSettings/DryreLHub.AchievementDashboard.json";
@@ -97,6 +97,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private void OnInspectorUpdate()
         {
             if (_saveDue && EditorApplication.timeSinceStartup >= _saveAt) SaveNow();
+            if (_tab == Tab.Rules && EditorApplication.timeSinceStartup >= _nextBindingScan) RefreshBindingScan();
             Repaint(); // keeps the "saved at" label and download previews fresh
         }
 
@@ -114,12 +115,15 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 _loadError = "Could not read '" + _dataPath + "': " + e.Message;
             }
             _saveDue = false;
+            _rulesFileStateDirty = true;
+            _drafts.Clear();
         }
 
         private void MarkDirty()
         {
             if (_loadError != null) return;
             _saveDue = true;
+            _rulesFileStateDirty = true;
             _saveAt = EditorApplication.timeSinceStartup + AutosaveDelaySeconds;
         }
 
@@ -161,6 +165,14 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             _errors = _data.Achievements.ToDictionary(a => a, a => DashboardValidator.Validate(a, _data.Achievements));
 
             DrawHeader();
+            DrawTabs();
+
+            if (_tab == Tab.Rules)
+            {
+                DrawRulesTab();
+                return;
+            }
+
             using (new EditorGUI.DisabledScope(_isBusy))
             {
                 DrawStatTiles();

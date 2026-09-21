@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using UnityEngine;
 
@@ -52,6 +52,11 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [Tooltip("Layered style: Resources path of the background, relative to the icon prefix, no extension. Empty = the manifest's iconBackground.")]
         [SerializeField] private string _iconBackgroundResource = "";
 
+        [Header("Achievement rules")]
+        [Tooltip("Rules authored in the Achievement Dashboard (rules.json). Empty = load Resources/<Rules Resource>; if neither exists there are simply no dashboard rules.")]
+        [SerializeField] private TextAsset _rulesJson;
+        [SerializeField] private string _rulesResource = "Achievements/rules";
+
         [Header("Diagnostics")]
         [SerializeField] private bool _verboseLogging;
 
@@ -87,6 +92,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             public AchievementIconStyleSetting IconStyle = AchievementIconStyleSetting.Auto;
             public Sprite IconBackground;
             public string IconBackgroundResource = "";
+            public TextAsset RulesJson;
+            public string RulesResource = "Achievements/rules";
             public AudioClip UnlockSound;
             public float ToastHoldDuration = 4.5f;
             public bool VerboseLogging;
@@ -117,6 +124,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             host._iconStyle = config.IconStyle;
             host._iconBackground = config.IconBackground;
             host._iconBackgroundResource = config.IconBackgroundResource;
+            host._rulesJson = config.RulesJson;
+            host._rulesResource = config.RulesResource;
             host._verboseLogging = config.VerboseLogging;
             go.SetActive(true);
 
@@ -304,12 +313,30 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                     ApplyIconStyle(catalog);
                 }
 
+                EnsureRulesRunner();
+
                 _logger.Info("Initialized " + catalog.Count + " achievements for '" + catalog.GameSlug + "' (catalog v" + catalog.CatalogVersion + ", " + _system.UnlockedCount + " unlocked, " + _system.PendingSyncCount + " pending sync).");
             }
             catch (Exception e)
             {
                 _logger.Error("Achievement system failed to start; gameplay continues without it. " + e);
             }
+        }
+
+        /// <summary>Starts the rules the dashboard authored, once, if a rules.json exists. Missing file = no rules, no error.</summary>
+        private void EnsureRulesRunner()
+        {
+            if (GetComponent<AchievementRulesRunner>() != null) return;
+
+            string json = _rulesJson != null ? _rulesJson.text : null;
+            if (string.IsNullOrEmpty(json) && !string.IsNullOrEmpty(_rulesResource))
+            {
+                var asset = Resources.Load<TextAsset>(_rulesResource);
+                json = asset != null ? asset.text : null;
+            }
+            if (string.IsNullOrEmpty(json)) return;
+
+            gameObject.AddComponent<AchievementRulesRunner>().Initialize(json, _logger);
         }
 
         /// <summary>Resolves the icon style (Inspector/Config override, else the manifest) and hands it to the overlay.</summary>
