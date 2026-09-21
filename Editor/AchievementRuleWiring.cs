@@ -100,15 +100,89 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         // What is in the open scenes
         // ------------------------------------------------------------------
 
-        /// <summary>Every trigger and watcher in the open scenes, by the binding id the dashboard stamped on it.</summary>
-        public static Dictionary<string, Object> Scan()
+        /// <summary>
+        /// Every trigger and watcher that can be reached without opening anything, by the binding id the dashboard
+        /// stamped on it: the ones in open scenes and the open prefab stage, then the ones inside the given prefab
+        /// assets (read straight from the asset, so a prefab that is not open still counts).
+        /// </summary>
+        public static Dictionary<string, Object> Scan(IEnumerable<string> prefabPaths = null)
         {
             var map = new Dictionary<string, Object>(StringComparer.Ordinal);
             foreach (var trigger in Object.FindObjectsByType<AchievementTrigger>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 if (!string.IsNullOrEmpty(trigger.BindingId)) map[trigger.BindingId] = trigger;
             foreach (var watcher in Object.FindObjectsByType<AchievementMethodWatcher>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 if (!string.IsNullOrEmpty(watcher.BindingId)) map[watcher.BindingId] = watcher;
+
+            if (prefabPaths != null)
+            {
+                foreach (string path in prefabPaths.Where(IsPrefabPath).Distinct())
+                {
+                    var asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                    if (asset == null) continue;
+
+                    foreach (var trigger in asset.GetComponentsInChildren<AchievementTrigger>(true))
+                        if (!string.IsNullOrEmpty(trigger.BindingId) && !map.ContainsKey(trigger.BindingId)) map[trigger.BindingId] = trigger;
+                    foreach (var watcher in asset.GetComponentsInChildren<AchievementMethodWatcher>(true))
+                        if (!string.IsNullOrEmpty(watcher.BindingId) && !map.ContainsKey(watcher.BindingId)) map[watcher.BindingId] = watcher;
+                }
+            }
             return map;
+        }
+
+        // ------------------------------------------------------------------
+        // Prefabs and scenes that are not open
+        // ------------------------------------------------------------------
+
+        /// <summary>A binding made in prefab mode records the prefab asset's path where a scene binding records the scene's.</summary>
+        public static bool IsPrefabPath(string path) => !string.IsNullOrEmpty(path) && path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>True when what holds the trigger can be inspected right now: the scene is open, or the prefab asset exists.</summary>
+        public static bool IsContainerAvailable(string path) =>
+            IsPrefabPath(path) ? AssetDatabase.LoadAssetAtPath<GameObject>(path) != null : IsSceneLoaded(path);
+
+        private sealed class ClosedFileEntry
+        {
+            public DateTime Stamp;
+            public bool IsText;
+            public HashSet<string> BindingIds = new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private static readonly Dictionary<string, ClosedFileEntry> ClosedFiles = new Dictionary<string, ClosedFileEntry>(StringComparer.OrdinalIgnoreCase);
+        private static readonly System.Text.RegularExpressions.Regex BindingIdPattern =
+            new System.Text.RegularExpressions.Regex("_bindingId: ([0-9a-fA-F]{8})", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// Looks for a binding id in a scene file that is not open, by reading its text (cached until the file changes).
+        /// <paramref name="verifiable"/> is false when the file cannot be read as text (binary serialization), in which
+        /// case "not found" means nothing.
+        /// </summary>
+        public static bool ClosedFileContains(string assetPath, string bindingId, out bool verifiable)
+        {
+            verifiable = false;
+            string full = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+                System.IO.Directory.GetParent(Application.dataPath).FullName, assetPath));
+            if (!System.IO.File.Exists(full)) return false;
+
+            var stamp = System.IO.File.GetLastWriteTimeUtc(full);
+            if (!ClosedFiles.TryGetValue(full, out var entry) || entry.Stamp != stamp)
+            {
+                entry = new ClosedFileEntry { Stamp = stamp };
+                try
+                {
+                    string text = System.IO.File.ReadAllText(full);
+                    entry.IsText = text.StartsWith("%YAML", StringComparison.Ordinal);
+                    if (entry.IsText)
+                        foreach (System.Text.RegularExpressions.Match match in BindingIdPattern.Matches(text)) entry.BindingIds.Add(match.Groups[1].Value);
+                }
+                catch (Exception)
+                {
+                    entry.IsText = false; // unreadable right now: report "cannot verify", not "missing"
+                }
+                ClosedFiles[full] = entry;
+            }
+
+            verifiable = entry.IsText;
+            return entry.BindingIds.Contains(bindingId);
         }
 
         public static string ObjectPath(GameObject go)
@@ -179,38 +253,84 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             return null;
         }
 
-        /// <summary>Removes the trigger/watcher (and the UnityEvent listener that called it). False if it is not in an open scene.</summary>
-        public static bool Unbind(string bindingId)
+        /// <summary>
+        /// Removes the trigger/watcher (and the UnityEvent listener that called it), wherever it can be reached: an open
+        /// scene, an open prefab stage, or a prefab asset (edited and saved in place). False if it is in a scene that is
+        /// not open, or is not there any more.
+        /// </summary>
+        public static bool Unbind(DashboardBinding binding)
         {
-            if (!Scan().TryGetValue(bindingId, out var found) || found == null) return false;
+            Component found;
+            if (IsPrefabPath(binding.ScenePath))
+            {
+                // A copy of the trigger inside a scene's prefab instance cannot be deleted from the scene, so a prefab
+                // binding is only ever removed through the prefab: its open stage, or the asset itself.
+                var stage = PrefabStageUtility.GetCurrentPrefabStage();
+                if (stage == null || stage.assetPath != binding.ScenePath) return UnbindInPrefabAsset(binding.ScenePath, binding.Id);
+                found = FindBinding(stage.prefabContentsRoot, binding.Id);
+            }
+            else
+            {
+                found = Scan().TryGetValue(binding.Id, out var live) ? live as Component : null;
+            }
+            if (found == null) return false;
 
             Undo.IncrementCurrentGroup();
             Undo.SetCurrentGroupName("Unbind achievement rule");
             int group = Undo.GetCurrentGroup();
 
-            var go = ((Component)found).gameObject;
-            if (found is AchievementTrigger)
-            {
-                foreach (var component in go.GetComponents<Component>().Where(c => c != null))
-                {
-                    foreach (var member in FindEvents(component))
-                    {
-                        // Backwards: removing an entry shifts the ones after it.
-                        for (int i = member.Event.GetPersistentEventCount() - 1; i >= 0; i--)
-                        {
-                            if (member.Event.GetPersistentTarget(i) != found) continue;
-                            Undo.RecordObject(component, "Unbind achievement rule");
-                            UnityEventTools.RemovePersistentListener(member.Event, i);
-                            Touch(component);
-                        }
-                    }
-                }
-            }
+            var go = found.gameObject;
+            if (found is AchievementTrigger) RemoveListenersTo(found, go, record: true);
 
             Undo.DestroyObjectImmediate(found);
             EditorSceneManager.MarkSceneDirty(go.scene);
             Undo.CollapseUndoOperations(group);
             return true;
+        }
+
+        private static Component FindBinding(GameObject root, string bindingId)
+        {
+            Component found = root.GetComponentsInChildren<AchievementTrigger>(true).FirstOrDefault(t => t.BindingId == bindingId);
+            return found != null ? found : root.GetComponentsInChildren<AchievementMethodWatcher>(true).FirstOrDefault(w => w.BindingId == bindingId);
+        }
+
+        private static void RemoveListenersTo(Object trigger, GameObject go, bool record)
+        {
+            foreach (var component in go.GetComponents<Component>().Where(c => c != null))
+            {
+                foreach (var member in FindEvents(component))
+                {
+                    // Backwards: removing an entry shifts the ones after it.
+                    for (int i = member.Event.GetPersistentEventCount() - 1; i >= 0; i--)
+                    {
+                        if (member.Event.GetPersistentTarget(i) != trigger) continue;
+                        if (record) Undo.RecordObject(component, "Unbind achievement rule");
+                        UnityEventTools.RemovePersistentListener(member.Event, i);
+                        if (record) Touch(component);
+                    }
+                }
+            }
+        }
+
+        private static bool UnbindInPrefabAsset(string prefabPath, string bindingId)
+        {
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) == null) return false;
+
+            var root = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                var target = FindBinding(root, bindingId);
+                if (target == null) return false;
+
+                if (target is AchievementTrigger) RemoveListenersTo(target, target.gameObject, record: false);
+                Object.DestroyImmediate(target);
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                return true;
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
         }
 
         private static string CheckSceneObject(Component source)

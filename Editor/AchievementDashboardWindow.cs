@@ -43,6 +43,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private string _saveError;
         private DateTime? _lastSaved;
 
+        // A failed save is retried every second. It is only shown once it has kept failing for this long, so a
+        // file that something holds for a moment (a scan, an indexer, a sync client) never flashes an error.
+        private const double SaveFailureGraceSeconds = 6.0;
+        private double _saveFailingSince;
+
+        private bool SaveFailureVisible => _saveError != null && EditorApplication.timeSinceStartup - _saveFailingSince >= SaveFailureGraceSeconds;
+
         private Vector2 _scroll;
         private string _search = "";
         private Filter _filter = Filter.All;
@@ -135,18 +142,20 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             {
                 _data.Save(ToFullPath(_dataPath));
                 _saveError = null;
+                _saveFailingSince = 0;
                 _lastSaved = DateTime.Now;
             }
             catch (Exception e)
             {
                 string described = DashboardData.Describe(e);
                 if (_saveError != described) Debug.LogWarning("[Achievements] Could not save the dashboard file '" + _dataPath + "': " + described);
+                if (_saveError == null) _saveFailingSince = EditorApplication.timeSinceStartup;
                 _saveError = described;
 
                 // Keep trying: the cause is usually a lock that clears on its own, and until a save succeeds the
                 // newest edits exist only in memory.
                 _saveDue = true;
-                _saveAt = EditorApplication.timeSinceStartup + 2.0;
+                _saveAt = EditorApplication.timeSinceStartup + 1.0;
             }
         }
 
@@ -190,6 +199,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 DrawStatTiles();
                 DrawToolbar();
                 DrawConnection();
+                DrawGameSetup();
             }
 
             if (_loadError != null) EditorGUILayout.HelpBox(_loadError + "\nChoose another data file, or fix/delete this one and press Reload. Nothing is saved until this is resolved.", MessageType.Error);
@@ -218,13 +228,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             string saveText;
             Color saveColor;
             if (_loadError != null) { saveText = "NOT SAVING"; saveColor = Palette.Danger; }
-            else if (_saveError != null) { saveText = "SAVE FAILED"; saveColor = Palette.Danger; }
+            else if (SaveFailureVisible) { saveText = "SAVE FAILED"; saveColor = Palette.Danger; }
             else if (_saveDue) { saveText = "UNSAVED..."; saveColor = Palette.Modified; }
             else if (_lastSaved.HasValue) { saveText = "SAVED " + _lastSaved.Value.ToString("HH:mm:ss"); saveColor = Palette.Synced; }
             else { saveText = "AUTOSAVE ON"; saveColor = Palette.Retired; }
             DrawPill(new Rect(r.xMax - 148, r.y + 18, 132, 22), saveText, saveColor);
 
-            if (_saveError != null) EditorGUILayout.HelpBox("Could not save '" + _dataPath + "': " + _saveError, MessageType.Error);
+            if (SaveFailureVisible) EditorGUILayout.HelpBox("Could not save '" + _dataPath + "': " + _saveError, MessageType.Error);
         }
 
         private void DrawStatTiles()

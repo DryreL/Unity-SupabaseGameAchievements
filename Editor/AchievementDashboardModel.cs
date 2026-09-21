@@ -298,7 +298,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         /// </summary>
         public void Save(string fullPath)
         {
-            string json = JsonConvert.SerializeObject(this, Formatting.Indented) + "\n";
+            string json = JsonConvert.SerializeObject(this, Formatting.Indented).Replace("\r\n", "\n") + "\n";
             string directory = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
@@ -723,7 +723,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             return dot > slash ? path.Substring(0, dot) : path;
         }
 
-        public static string SerializeManifest(JObject manifest) => JsonConvert.SerializeObject(manifest, Formatting.Indented) + "\n";
+        public static string SerializeManifest(JObject manifest) => JsonConvert.SerializeObject(manifest, Formatting.Indented).Replace("\r\n", "\n") + "\n";
     }
 
     internal struct PullResult

@@ -55,7 +55,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         private void RefreshBindingScan()
         {
-            _bindingScan = AchievementRuleWiring.Scan();
+            _bindingScan = AchievementRuleWiring.Scan(_data.Rules.SelectMany(r => r.Bindings).Select(b => b.ScenePath));
             _nextBindingScan = EditorApplication.timeSinceStartup + 1.0;
         }
 
@@ -69,7 +69,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             if (_rulesFileMissing) _rulesFileStale = _data.Rules.Count > 0;
             else
             {
-                try { _rulesFileStale = File.ReadAllText(path).Replace("\r\n", "\n") != generated; }
+                try { _rulesFileStale = File.ReadAllText(path).Replace("\r\n", "\n") != generated.Replace("\r\n", "\n"); }
                 catch (IOException) { _rulesFileStale = true; }
             }
         }
@@ -104,6 +104,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             if (_rulesFileStateDirty) RefreshRulesFileState();
 
             DrawRulesToolbar();
+            DrawGameSetup();
 
             if (_loadError != null) EditorGUILayout.HelpBox(_loadError + "\nNothing is saved until this is resolved.", MessageType.Error);
             if (!string.IsNullOrEmpty(_status)) EditorGUILayout.HelpBox(_status, _statusType);
@@ -357,13 +358,26 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private void DrawBindingRow(DashboardRule rule, DashboardBinding binding)
         {
             _bindingScan.TryGetValue(binding.Id, out var live);
-            bool sceneOpen = AchievementRuleWiring.IsSceneLoaded(binding.ScenePath);
-            string status = live != null ? "IN SCENE" : sceneOpen ? "MISSING" : "SCENE CLOSED";
-            Color color = live != null ? Palette.Synced : sceneOpen ? Palette.Danger : Palette.Retired;
+            bool isPrefab = AchievementRuleWiring.IsPrefabPath(binding.ScenePath);
+            bool available = AchievementRuleWiring.IsContainerAvailable(binding.ScenePath);
 
+            // Where the trigger is, as far as can be told without opening anything.
+            bool verifiable = false;
+            bool inClosedFile = live == null && !isPrefab && !available &&
+                AchievementRuleWiring.ClosedFileContains(binding.ScenePath, binding.Id, out verifiable);
+
+            string status;
+            Color color;
+            if (live != null) { status = isPrefab ? "IN PREFAB" : "IN SCENE"; color = Palette.Synced; }
+            else if (available) { status = "MISSING"; color = Palette.Danger; }
+            else if (inClosedFile) { status = "IN CLOSED SCENE"; color = Palette.New; }
+            else if (verifiable) { status = "MISSING"; color = Palette.Danger; }
+            else { status = isPrefab ? "PREFAB NOT FOUND" : "SCENE CLOSED"; color = Palette.Retired; }
+
+            bool canOpen = live == null || status == "IN CLOSED SCENE";
             using (new EditorGUILayout.HorizontalScope(EditorStyles.helpBox))
             {
-                Rect pill = GUILayoutUtility.GetRect(84, 18, GUILayout.Width(84), GUILayout.Height(18));
+                Rect pill = GUILayoutUtility.GetRect(112, 18, GUILayout.Width(112), GUILayout.Height(18));
                 DrawPill(pill, status, color);
 
                 string sceneName = Path.GetFileNameWithoutExtension(binding.ScenePath);
@@ -379,55 +393,63 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                         EditorGUIUtility.PingObject(live);
                     }
                 }
-                else if (!sceneOpen && GUILayout.Button("Open scene", EditorStyles.miniButton, GUILayout.Width(74)))
+                else if (canOpen && (isPrefab ? available : true))
                 {
-                    OpenScene(binding.ScenePath);
+                    if (GUILayout.Button(isPrefab ? "Open prefab" : "Open scene", EditorStyles.miniButton, GUILayout.Width(isPrefab ? 78 : 74)))
+                        OpenContainer(binding.ScenePath);
                 }
 
-                if (GUILayout.Button(new GUIContent("Unbind", "Remove the trigger from the scene and this hookup from the rule."), EditorStyles.miniButton, GUILayout.Width(56)))
+                if (GUILayout.Button(new GUIContent("Unbind", "Remove the trigger and this hookup from the rule."), EditorStyles.miniButton, GUILayout.Width(56)))
                     Unbind(rule, binding);
             }
 
-            if (live == null && sceneOpen)
-                EditorGUILayout.LabelField("The trigger is gone from the scene (deleted by hand?). Unbind and add the hookup again.", _styles.MiniDanger);
+            if (status == "MISSING")
+                EditorGUILayout.LabelField("The trigger is gone from " + (isPrefab ? "the prefab" : "the scene") + " (deleted by hand?). Unbind and add the hookup again.", _styles.MiniDanger);
         }
 
-        private void OpenScene(string scenePath)
+        private void OpenContainer(string path)
         {
-            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            EditorSceneManager.OpenScene(scenePath);
+            if (AchievementRuleWiring.IsPrefabPath(path))
+            {
+                var asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (asset != null) AssetDatabase.OpenAsset(asset);
+            }
+            else
+            {
+                if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+                EditorSceneManager.OpenScene(path);
+            }
             RefreshBindingScan();
             GUIUtility.ExitGUI();
         }
 
         private void Unbind(DashboardRule rule, DashboardBinding binding)
         {
-            bool removedFromScene = AchievementRuleWiring.Unbind(binding.Id);
-            bool sceneOpen = AchievementRuleWiring.IsSceneLoaded(binding.ScenePath);
+            bool removed = AchievementRuleWiring.Unbind(binding);
+            bool available = AchievementRuleWiring.IsContainerAvailable(binding.ScenePath);
 
-            if (!removedFromScene && !sceneOpen && !EditorUtility.DisplayDialog("Scene is not open",
-                    "The scene '" + binding.ScenePath + "' is not open, so its trigger cannot be removed now. Removing the hookup here leaves that trigger in the scene; " +
+            if (!removed && !available && !EditorUtility.DisplayDialog("Not open",
+                    "'" + binding.ScenePath + "' is not open, so its trigger cannot be removed now. Removing the hookup here leaves that trigger where it is; " +
                     "it only reports an event nothing listens to any more and can be deleted by hand.\n\nRemove the hookup anyway?", "Remove hookup", "Cancel"))
                 return;
 
             rule.Bindings.Remove(binding);
             MarkDirty();
             RefreshBindingScan();
-            SetStatus(removedFromScene
-                ? "Unbound. Save the scene (Ctrl+S) to keep the change."
-                : "Removed the hookup from the rule.", MessageType.Info);
+            string saveHint = AchievementRuleWiring.IsPrefabPath(binding.ScenePath) ? "The prefab was saved." : "Save the scene (Ctrl+S) to keep the change.";
+            SetStatus(removed ? "Unbound. " + saveHint : "Removed the hookup from the rule.", MessageType.Info);
             GUIUtility.ExitGUI();
         }
 
         private void RemoveRule(DashboardRule rule)
         {
-            int inScenes = rule.Bindings.Count(b => _bindingScan.ContainsKey(b.Id));
-            int elsewhere = rule.Bindings.Count - inScenes;
-            string message = "Delete this rule" + (rule.Bindings.Count > 0 ? " and remove " + inScenes + " trigger(s) from the open scenes" : "") + "?";
+            int reachable = rule.Bindings.Count(b => _bindingScan.ContainsKey(b.Id));
+            int elsewhere = rule.Bindings.Count - reachable;
+            string message = "Delete this rule" + (rule.Bindings.Count > 0 ? " and remove " + reachable + " trigger(s) from the open scenes and prefabs" : "") + "?";
             if (elsewhere > 0) message += "\n" + elsewhere + " hookup(s) are in scenes that are not open; their triggers stay there and do nothing.";
             if (!EditorUtility.DisplayDialog("Delete rule", message, "Delete", "Cancel")) return;
 
-            foreach (var binding in rule.Bindings.ToList()) AchievementRuleWiring.Unbind(binding.Id);
+            foreach (var binding in rule.Bindings.ToList()) AchievementRuleWiring.Unbind(binding);
             _data.Rules.Remove(rule);
             MarkDirty();
             RefreshBindingScan();

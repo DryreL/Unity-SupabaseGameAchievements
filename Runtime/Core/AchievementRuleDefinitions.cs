@@ -129,7 +129,8 @@ namespace DryreLHub.SupabaseGameAchievements
             }
 
             var root = new JObject { ["formatVersion"] = SupportedFormatVersion, ["rules"] = array };
-            return JsonConvert.SerializeObject(root, Formatting.Indented) + "\n";
+            // Newtonsoft indents with Environment.NewLine (CRLF on Windows); LF keeps the file identical on every OS.
+            return JsonConvert.SerializeObject(root, Formatting.Indented).Replace("\r\n", "\n") + "\n";
         }
 
         /// <summary>

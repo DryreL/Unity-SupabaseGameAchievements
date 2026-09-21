@@ -371,6 +371,19 @@ either way; those live on `UnityAchievementOverlay`, not on the view.
 
 ## Conditional achievements: counters, quests, "without failing"
 
+### Something has to start the system (Game setup)
+
+Nothing starts the achievement system by itself. Without a bootstrap object in the game's first scene (or a code
+call to `UnityAchievementManager.Create`), every `TryUnlock` and every rule is silently ignored; the Console only
+says `Report('...') ignored: no achievement rules are active`. The dashboard's **Game setup** line (Achievements
+and Rules tabs) scans your scenes, prefabs and scripts, tells you what starts it, and if nothing does offers
+**Add bootstrap to the open scene**: an `AchievementBootstrap` configured with your manifest and the Supabase URL
+(only a *publishable* key is ever written into a scene). It keeps running across scene loads, so put it in the scene
+the game starts with. It has no sign-in: unlocks are saved locally and sync once your sign-in code calls
+`UnityAchievementManager.Instance.Initialize(authProvider)`; Patreon games use the Patreon Integration sample's
+bootstrap instead (the dashboard offers **Use the Patreon setup** when that sample is imported). The dashboard's
+`rules.json` starts with the manager, no extra step.
+
 ### From the dashboard, with no code (the Rules tab)
 
 **Tools → DryreL Hub → Supabase Game Achievements → Achievement Dashboard → Rules.** A rule is an achievement
@@ -397,8 +410,8 @@ plus *how* it unlocks, plus the places in your scenes that drive it:
    `Assets/Resources/Achievements/rules.json`, and `UnityAchievementManager` loads it by itself: there is
    nothing to put in a scene and no code to write. Each level's buttons are hooked in that level's scene.
 
-Every hookup row shows whether its trigger is *in scene*, *missing* (deleted by hand) or in a *closed scene*
-(with an *Open scene* button); *Unbind* removes the trigger and its event listener again. Deleting a rule
+Every hookup row shows whether its trigger is *in scene* / *in prefab*, *missing* (deleted by hand) or in a *closed scene*
+(with an *Open scene* / *Open prefab* button; a prefab you bound in prefab mode is read straight from the asset); *Unbind* removes the trigger and its event listener again. Deleting a rule
 removes its triggers from the open scenes. A rule's event name (e.g. `r3fa2c1`) is permanent and shown on the
 card, so from code you can still report it: `AchievementEvents.Report("r3fa2c1")`. Rules and hookups are saved
 in the dashboard file; the database is not involved.
