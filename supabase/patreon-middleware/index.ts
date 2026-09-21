@@ -21,7 +21,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
  * is embedded on any website. This is necessary for games that can be hosted
  * on any domain (itch.io, Newgrounds, custom sites, etc.).
  * 
- * Security: POST requests still require SUPABASE_ANON_KEY in Authorization header.
+ * Security: POST requests require a value from SUPABASE_PUBLISHABLE_KEYS in the Authorization header.
  * GET requests (OAuth callbacks) are public by design.
  */
 const getCorsHeaders = (origin: string | null, methods: string = 'GET, POST, OPTIONS') => {
@@ -34,7 +34,7 @@ const getCorsHeaders = (origin: string | null, methods: string = 'GET, POST, OPT
   const headers: Record<string, string> = {
     'Access-Control-Allow-Origin': corsOrigin,
     'Access-Control-Allow-Methods': methods,
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, User-Agent',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, User-Agent, apikey, x-client-info',
   }
 
   // Only set credentials if we have a specific origin (not wildcard)
@@ -57,8 +57,8 @@ const getCorsHeaders = (origin: string | null, methods: string = 'GET, POST, OPT
 // preventing any JavaScript (<script>) from executing (breaking postMessage and OAuth callbacks).
 //
 // Therefore, the Edge Function MUST perform an HTTP 302/307 redirect to an external static
-// HTML page hosted on a proper web server / CDN (viznitygames.com) that serves text/html.
-const EXTERNAL_REDIRECT_BASE_URL = 'https://viznitygames.com/api/oauth/redirect/index.html'
+// HTML page hosted on a proper web server / CDN that serves text/html.
+const EXTERNAL_REDIRECT_BASE_URL = Deno.env.get('REDIRECT_BASE_URL') || 'https://yourdomain.com/api/oauth/redirect/index.html'
 
 function buildExternalRedirectUrl(url: URL): string {
   const redirectUrl = new URL(EXTERNAL_REDIRECT_BASE_URL)
@@ -412,7 +412,7 @@ async function handleTokenRefresh(
     try {
       tokenResponse = await fetch('https://www.patreon.com/api/oauth2/token', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Viznity Launcher' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Patreon Authenticator' },
         body: formData,
       })
       responseText = await tokenResponse.text()
@@ -468,34 +468,140 @@ async function handleTokenRefresh(
 }
 
 // ============================================================================
+// action=verify-game-access
+// ============================================================================
+// Server-authoritative entitlement check. The client may provide a Patreon token
+// and requested scene, but identity, membership, and admin status are resolved here.
+async function handleVerifyGameAccess(
+  req: Request,
+  corsHeaders: Record<string, string>,
+  supabaseAnonKey: string | undefined,
+): Promise<Response> {
+  if (!verifyAnonKey(req.headers.get('authorization'), supabaseAnonKey)) {
+    return jsonResponse(401, { error: 'Unauthorized' }, corsHeaders)
+  }
+
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch {
+    return jsonResponse(400, { error: 'invalid_json' }, corsHeaders)
+  }
+
+  const patreonToken = body.patreon_access_token
+  const sceneName = body.scene_name
+  const rawGameId = body.game_id
+  let gameId = typeof rawGameId === 'string' ? rawGameId.trim() : ''
+  if (!gameId || gameId.length > 128) {
+    gameId = 'default_game'
+  }
+  if (typeof patreonToken !== 'string' || patreonToken.length < 10 || patreonToken.length > 4096) {
+    return jsonResponse(400, { error: 'missing_patreon_access_token' }, corsHeaders)
+  }
+  if (typeof sceneName !== 'string' || sceneName.length < 1 || sceneName.length > 128) {
+    return jsonResponse(400, { error: 'invalid_scene_name' }, corsHeaders)
+  }
+
+  try {
+    const identityResponse = await fetch(
+      'https://www.patreon.com/api/oauth2/v2/identity?include=memberships&fields[member]=patron_status,currently_entitled_amount_cents',
+      {
+        headers: { Authorization: `Bearer ${patreonToken}`, 'User-Agent': 'Patreon Authenticator' },
+        signal: AbortSignal.timeout(10_000),
+      },
+    )
+    if (identityResponse.status === 401 || identityResponse.status === 403) {
+      return jsonResponse(401, { error: 'invalid_patreon_token' }, corsHeaders)
+    }
+    if (!identityResponse.ok) {
+      return jsonResponse(503, { error: 'patreon_unavailable' }, corsHeaders)
+    }
+
+    const identity = await identityResponse.json()
+    const patreonId = identity?.data?.id
+    if (typeof patreonId !== 'string') {
+      return jsonResponse(502, { error: 'unexpected_identity_response' }, corsHeaders)
+    }
+
+    const memberships = Array.isArray(identity?.included) ? identity.included : []
+    const hasActiveMembership = memberships.some((entry: any) =>
+      entry?.type === 'member' && entry?.attributes?.patron_status === 'active_patron',
+    )
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (!supabaseUrl || !serviceKey) return jsonResponse(500, { error: 'server_configuration_error' }, corsHeaders)
+
+    const publishableKey = defaultPublishableKey(supabaseAnonKey) ?? ''
+    const adminResponse = await fetch(`${supabaseUrl}/functions/v1/patreon-user-info`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${publishableKey}`,
+        apikey: publishableKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ patreon_access_token: patreonToken, user_id: patreonId, patreon_id: patreonId }),
+      signal: AbortSignal.timeout(10_000),
+    })
+
+    let isAdmin = false
+    if (adminResponse.ok) {
+      const adminPayload = await adminResponse.json()
+      isAdmin = adminPayload?.is_admin === true || adminPayload?.isAdmin === true || adminPayload?.role === 'admin'
+    }
+
+    const premiumResponse = await fetch(
+      `${supabaseUrl}/rest/v1/user_game_stats?user_id=eq.${encodeURIComponent(patreonId)}&game_id=eq.${encodeURIComponent(gameId)}&premium_expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=user_id&limit=1`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(10_000) },
+    )
+    const premiumRows = premiumResponse.ok ? await premiumResponse.json() : []
+    const hasPremiumEntitlement = Array.isArray(premiumRows) && premiumRows.length > 0
+
+    return jsonResponse(200, {
+      authorized: isAdmin || hasActiveMembership || hasPremiumEntitlement,
+      is_admin: isAdmin,
+      patron_status: hasActiveMembership ? 'active_patron' : 'not_patron',
+      premium_entitlement: hasPremiumEntitlement,
+      scene_name: sceneName,
+      patreon_id: patreonId,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    }, corsHeaders)
+  } catch (error) {
+    console.error('[verify-game-access] validation failed:', (error as Error).name)
+    return jsonResponse(503, { error: 'validation_unavailable' }, corsHeaders)
+  }
+}
+
+// ============================================================================
 // action=supabase-session  (additive)
 // ============================================================================
 //
 // Body:    { patreon_access_token }
-// Returns: { access_token, refresh_token, expires_in, expires_at, token_type, user_id }
+// Returns: { access_token, refresh_token, expires_in, expires_at, token_type, user_id, patreon_id }
 //
 // Bridges a Patreon identity to a regular Supabase Auth session so database features (the
 // achievement system first) can rely on auth.uid() + RLS instead of trusting client-supplied ids.
 //
 //   1. Verify the Patreon token by calling Patreon's identity endpoint → Patreon user id.
-//   2. Find-or-create one Supabase Auth user per Patreon id. The email is synthetic and never
-//      receives mail; the link to Patreon lives in app_metadata.patreon_id, which only the
-//      service role can write. A user whose app_metadata does not match is refused, so an account
-//      someone self-registered with the synthetic address can never be hijacked into.
+//   2. Find-or-create one Supabase Auth user per Patreon id. When the optional public.patreon_identities
+//      table exists, its unique patreon_id is the source of truth for which auth user that is, so
+//      the synthetic email (and IDENTITY_EMAIL_DOMAIN) can change without splitting a player across
+//      user ids. Only when no profile exists yet is a user created by synthetic email; the profile
+//      is then recorded. The email never receives mail; app_metadata.patreon_id (service-role-only)
+//      must match, so an account someone self-registered with the synthetic address can never be
+//      hijacked into.
 //   3. Mint a session with admin generate_link + verify (the documented server-side way to issue a
 //      session for a user without a password). No email is sent by either call.
 //
 // After this one call, clients refresh the Supabase session directly against
 // /auth/v1/token?grant_type=refresh_token — this function is not on the refresh path.
 //
-// Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY are auto-injected.
+// Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and SUPABASE_PUBLISHABLE_KEYS are auto-injected.
 // SUPABASE_SECRET_KEYS (auto-injected JSON, {"default": "sb_secret_..."}) enables Sb-Forwarded-For so
 // Auth's per-IP rate limits apply to the real client instead of this function's shared egress IP.
 // (Custom secrets cannot start with SUPABASE_, so there is nothing to configure for this.)
 // Optional: IDENTITY_EMAIL_DOMAIN (default below). Changing it after launch orphans existing users.
 // Never logs tokens.
 
-const DEFAULT_IDENTITY_EMAIL_DOMAIN = 'patreon.users.viznitygames.com'
+const DEFAULT_IDENTITY_EMAIL_DOMAIN = Deno.env.get('IDENTITY_EMAIL_DOMAIN') || 'patreon.users.local'
 
 function defaultSecretKey(): string | undefined {
   try {
@@ -542,9 +648,10 @@ async function handleSupabaseSession(
 
   // 1. Who is this? Ask Patreon, never the client.
   let patreonId: string
+  let patreonUsername: string | null = null
   try {
-    const identity = await fetch('https://www.patreon.com/api/oauth2/v2/identity', {
-      headers: { Authorization: `Bearer ${patreonToken}`, 'User-Agent': 'Viznity Launcher' },
+    const identity = await fetch('https://www.patreon.com/api/oauth2/v2/identity?fields%5Buser%5D=full_name,vanity', {
+      headers: { Authorization: `Bearer ${patreonToken}`, 'User-Agent': 'Patreon Authenticator' },
       signal: AbortSignal.timeout(10_000),
     })
     if (identity.status === 401 || identity.status === 403) {
@@ -559,12 +666,13 @@ async function handleSupabaseSession(
       return jsonResponse(502, { error: 'unexpected_identity_response' }, corsHeaders)
     }
     patreonId = id
+    const attrs = payload?.data?.attributes
+    const name = attrs?.vanity || attrs?.full_name
+    if (typeof name === 'string' && name.length > 0) patreonUsername = name.slice(0, 200)
   } catch {
     return jsonResponse(503, { error: 'identity_provider_unavailable', retry_after: 30 }, corsHeaders, { 'Retry-After': '30' })
   }
 
-  const domain = Deno.env.get('IDENTITY_EMAIL_DOMAIN') || DEFAULT_IDENTITY_EMAIL_DOMAIN
-  const email = `patreon-${patreonId}@${domain}`
   const adminHeaders = {
     apikey: serviceKey,
     Authorization: `Bearer ${serviceKey}`,
@@ -572,18 +680,48 @@ async function handleSupabaseSession(
   }
 
   try {
-    // 2. Find-or-create. 422 email_exists is the normal "already created" path.
-    const created = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
-      method: 'POST',
-      headers: adminHeaders,
-      body: JSON.stringify({ email, email_confirm: true, app_metadata: { patreon_id: patreonId } }),
-      signal: AbortSignal.timeout(10_000),
-    })
-    if (!created.ok && created.status !== 422) {
-      console.error('[supabase-session] create user failed:', created.status)
+    // 2a. Known Patreon account? Use the auth user recorded for it, whatever its email is.
+    // A 404 means the optional patreon_identities table is not installed: fall back to the email lookup.
+    const profileHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }
+    const lookup = await fetch(
+      `${supabaseUrl}/rest/v1/patreon_identities?patreon_id=eq.${encodeURIComponent(patreonId)}&select=user_id&limit=1`,
+      { headers: profileHeaders, signal: AbortSignal.timeout(10_000) },
+    )
+    if (!lookup.ok && lookup.status !== 404) {
+      console.error('[supabase-session] profile lookup failed:', lookup.status)
       return jsonResponse(503, { error: 'auth_unavailable', retry_after: 30 }, corsHeaders, { 'Retry-After': '30' })
     }
-    await created.body?.cancel()
+    const profileTableExists = lookup.ok
+    const knownUserId: string | undefined = lookup.ok ? (await lookup.json())?.[0]?.user_id : undefined
+    if (!lookup.ok) await lookup.body?.cancel()
+
+    let email: string
+    if (knownUserId) {
+      const known = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(knownUserId)}`, {
+        headers: adminHeaders,
+        signal: AbortSignal.timeout(10_000),
+      })
+      const knownUser = known.ok ? await known.json() : null
+      if (typeof knownUser?.email !== 'string') {
+        console.error('[supabase-session] known user lookup failed:', known.status)
+        return jsonResponse(503, { error: 'auth_unavailable', retry_after: 30 }, corsHeaders, { 'Retry-After': '30' })
+      }
+      email = knownUser.email
+    } else {
+      // 2b. First sight of this Patreon account. 422 email_exists is the normal "already created" path.
+      email = `patreon-${patreonId}@${DEFAULT_IDENTITY_EMAIL_DOMAIN}`
+      const created = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({ email, email_confirm: true, app_metadata: { patreon_id: patreonId } }),
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!created.ok && created.status !== 422) {
+        console.error('[supabase-session] create user failed:', created.status)
+        return jsonResponse(503, { error: 'auth_unavailable', retry_after: 30 }, corsHeaders, { 'Retry-After': '30' })
+      }
+      await created.body?.cancel()
+    }
 
     // 3a. One-time token for that user (no email is sent by the admin endpoint).
     const link = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
@@ -609,7 +747,10 @@ async function handleSupabaseSession(
     }
 
     // 3b. Exchange it for a session. Forward the caller's IP when a secret key is configured.
-    const verifyHeaders: Record<string, string> = { 'Content-Type': 'application/json', apikey: supabaseAnonKey }
+    const verifyHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+      apikey: defaultPublishableKey(supabaseAnonKey) ?? '',
+    }
     const clientIp = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim()
     if (secretKey && clientIp) {
       verifyHeaders.apikey = secretKey
@@ -631,13 +772,34 @@ async function handleSupabaseSession(
       return jsonResponse(502, { error: 'unexpected_auth_response' }, corsHeaders)
     }
 
+    const userId: string = session.user?.id ?? linkData.id
+
+    // Record/refresh the Patreon identity (id + username) for this user. A unique violation on
+    // patreon_id means another request just recorded it: the next sign-in resolves to that user.
+    if (profileTableExists) {
+      const saved = await fetch(`${supabaseUrl}/rest/v1/patreon_identities?on_conflict=user_id`, {
+        method: 'POST',
+        headers: { ...profileHeaders, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({
+          user_id: userId,
+          patreon_id: patreonId,
+          ...(patreonUsername ? { patreon_username: patreonUsername } : {}),
+          updated_at: new Date().toISOString(),
+        }),
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!saved.ok) console.error('[supabase-session] profile upsert failed:', saved.status)
+      await saved.body?.cancel()
+    }
+
     return jsonResponse(200, {
       access_token: session.access_token,
       refresh_token: session.refresh_token,
       expires_in: session.expires_in,
       expires_at: session.expires_at,
       token_type: session.token_type ?? 'bearer',
-      user_id: session.user?.id ?? linkData.id,
+      user_id: userId,
+      patreon_id: patreonId,
     }, corsHeaders)
   } catch (e) {
     console.error('[supabase-session] auth request failed:', (e as Error).name)
@@ -659,14 +821,14 @@ interface TokenResponse {
 
 async function handleTokenExchange(req: Request, corsHeaders: Record<string, string>, supabaseAnonKey?: string): Promise<Response> {
   try {
-    // Security: Verify SUPABASE_ANON_KEY
+    // Security: Verify a configured publishable key
     const authHeader = req.headers.get('authorization')
     if (!verifyAnonKey(authHeader, supabaseAnonKey)) {
-      console.error('[Token Exchange] ❌ SECURITY: Invalid or missing SUPABASE_ANON_KEY')
+      console.error('[Token Exchange] ❌ SECURITY: Invalid or missing publishable key')
       return new Response(
         JSON.stringify({
           error: 'Unauthorized',
-          message: 'Token exchange requires valid Authorization header with SUPABASE_ANON_KEY'
+          message: 'Token exchange requires a valid publishable key in the Authorization header'
         }),
         {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -918,16 +1080,181 @@ async function handleTokenExchange(req: Request, corsHeaders: Record<string, str
 // Proxy Handler
 // ============================================================================
 
+// ============================================================================
+// Supabase REST target allowlist + caller identity
+// ============================================================================
+//
+// The proxy used to sign every forwarded Supabase request with SUPABASE_SERVICE_ROLE_KEY,
+// which bypasses Row Level Security outright. The only thing gating the proxy is the
+// publishable key — public by design and shipped inside every game and launcher binary — so
+// that made the entire database readable and writable by anyone who unpacked a build.
+//
+// The proxy now forwards the *caller's own* Supabase Auth session instead. That session is
+// minted by action=supabase-session, which verifies the Patreon access token against Patreon
+// itself and stamps app_metadata.patreon_id (a field only the service role can write).
+// PostgREST validates the JWT and RLS applies, so a publishable key on its own buys nothing.
+// The service role key is never attached to a client-chosen URL anywhere in this file.
+
+/** Tables the proxy may reach. Anything else is refused even with a valid user session. */
+const PROXY_ALLOWED_TABLES = new Set(['user_game_stats'])
+
+/** RPCs the proxy may invoke. Each is a SECURITY DEFINER function that derives the acting
+ *  user from auth.jwt() and ignores any client-supplied id. `update_premium_status` is
+ *  deliberately absent — it grants entitlements and stays service-role only. */
+const PROXY_ALLOWED_RPCS = new Set([
+  'batch_update_stats',
+  'activate_promotion_key',
+  'get_user_stats',
+  'get_game_data_value',
+  'verify_premium_access',
+  'start_game_session',
+  'heartbeat_game_session',
+  'end_game_session',
+])
+
+/** `Prefer` values a caller may set. Anything unrecognised is dropped rather than forwarded,
+ *  so a caller cannot ask PostgREST for behaviour the app never intended. */
+const PROXY_ALLOWED_PREFER = new Set([
+  'return=minimal',
+  'return=representation',
+  'resolution=merge-duplicates',
+  'count=exact',
+])
+
+function sanitizePrefer(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const parts = value
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => PROXY_ALLOWED_PREFER.has(part))
+  return parts.length > 0 ? parts.join(',') : undefined
+}
+
+type RestTarget = { kind: 'table'; name: string } | { kind: 'rpc'; name: string }
+
+/** Resolves a caller-supplied URL to an allowlisted PostgREST target, or null when it is not a
+ *  REST URL on this project or names a table/RPC the proxy may not reach. */
+function resolveSupabaseRestTarget(value: unknown): RestTarget | null {
+  if (typeof value !== 'string') return null
+
+  let targetUrl: URL
+  try {
+    targetUrl = new URL(value)
+  } catch {
+    return null
+  }
+
+  const configuredSupabaseUrl = Deno.env.get('SUPABASE_URL')
+  if (configuredSupabaseUrl) {
+    if (targetUrl.origin !== new URL(configuredSupabaseUrl).origin) return null
+  } else if (!targetUrl.hostname.endsWith('.supabase.co')) {
+    return null
+  }
+
+  if (!targetUrl.pathname.startsWith('/rest/v1/')) return null
+  const rest = targetUrl.pathname.slice('/rest/v1/'.length)
+  if (rest.includes('..')) return null
+
+  const segments = rest.split('/').filter((segment) => segment.length > 0)
+  if (segments.length === 1) {
+    const name = decodeURIComponent(segments[0])
+    return PROXY_ALLOWED_TABLES.has(name) ? { kind: 'table', name } : null
+  }
+  if (segments.length === 2 && segments[0] === 'rpc') {
+    const name = decodeURIComponent(segments[1])
+    return PROXY_ALLOWED_RPCS.has(name) ? { kind: 'rpc', name } : null
+  }
+  return null
+}
+
+function isSupabaseRestUrl(value: unknown): boolean {
+  return resolveSupabaseRestTarget(value) !== null
+}
+
+interface CallerIdentity {
+  patreonId: string
+  userId: string
+  token: string
+}
+
+const identityCache = new Map<string, { identity: CallerIdentity; expiresAt: number }>()
+const IDENTITY_CACHE_TTL_MS = 60_000
+
+/** Extracts the caller's Supabase Auth session token. It travels separately from the
+ *  Authorization header, which keeps carrying the publishable key so Supabase's own gateway
+ *  routing still works. */
+function callerSessionToken(req: Request, body?: Record<string, unknown>): string | undefined {
+  const header = req.headers.get('x-supabase-authorization')
+  const fromHeader = header?.startsWith('Bearer ') ? header.slice(7) : header ?? undefined
+  const raw = fromHeader ?? (typeof body?.user_token === 'string' ? body.user_token : undefined)
+  const token = raw?.trim()
+  return token && token.length >= 20 && token.length <= 8192 ? token : undefined
+}
+
+/** Resolves a Supabase Auth access token to the Patreon identity it was minted for. The
+ *  patreon_id lives in app_metadata, which only the service role can write, so a client cannot
+ *  forge it the way it could forge user_metadata. Returns null for an absent, expired, revoked
+ *  or otherwise invalid token. */
+async function resolveCallerIdentity(
+  token: string | undefined,
+  supabaseAnonKey: string | undefined,
+): Promise<CallerIdentity | null> {
+  const publishableKey = defaultPublishableKey(supabaseAnonKey)
+  if (!token || !publishableKey) return null
+
+  const cached = identityCache.get(token)
+  if (cached && cached.expiresAt > Date.now()) return cached.identity
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')
+  if (!supabaseUrl) return null
+
+  try {
+    const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { Authorization: `Bearer ${token}`, apikey: publishableKey },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) {
+      await response.body?.cancel()
+      return null
+    }
+    const user = await response.json()
+    const patreonId = user?.app_metadata?.patreon_id
+    const userId = user?.id
+    if (typeof patreonId !== 'string' || !/^[0-9]{1,32}$/.test(patreonId)) return null
+    if (typeof userId !== 'string' || userId.length === 0) return null
+
+    const identity: CallerIdentity = { patreonId, userId, token }
+    // Bounded so a burst of distinct tokens cannot grow this without limit.
+    if (identityCache.size > 500) identityCache.clear()
+    identityCache.set(token, { identity, expiresAt: Date.now() + IDENTITY_CACHE_TTL_MS })
+    return identity
+  } catch {
+    return null
+  }
+}
+
+function unauthorizedSession(corsHeaders: Record<string, string>): Response {
+  return new Response(
+    JSON.stringify({
+      error: 'Unauthorized',
+      message:
+        'Supabase data access requires the caller’s Supabase session token. Call action=supabase-session with the Patreon access token first, then send the returned access_token as the X-Supabase-Authorization header (or body.user_token).',
+      code: 'missing_user_session',
+    }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 },
+  )
+}
+
 async function handleProxy(req: Request, corsHeaders: Record<string, string>, supabaseAnonKey?: string): Promise<Response> {
   try {
-    // Security: Verify SUPABASE_ANON_KEY
+    // Security: Verify a configured publishable key
     const authHeader = req.headers.get('authorization')
     if (!verifyAnonKey(authHeader, supabaseAnonKey)) {
-      console.error('[Proxy] ❌ SECURITY: Invalid or missing SUPABASE_ANON_KEY')
+      console.error('[Proxy] ❌ SECURITY: Invalid or missing publishable key')
       return new Response(
         JSON.stringify({
           error: 'Unauthorized',
-          message: 'Proxy requests require valid Authorization header with SUPABASE_ANON_KEY'
+          message: 'Proxy requests require a valid publishable key in the Authorization header'
         }),
         {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -966,28 +1293,51 @@ async function handleProxy(req: Request, corsHeaders: Record<string, string>, su
     // Check if this is a POST body request
     const isTokenEndpoint = body.url && body.url.includes('/api/oauth2/token')
     const hasPatreonFormData = body.grant_type || body.refresh_token || body.code || body.client_id || body.client_secret
-    const isSupabaseUrlCheck = body.url && (body.url.includes('.supabase.co/rest/v1/') || body.url.includes('.supabase.co/rest/v1'))
+    const restTarget = resolveSupabaseRestTarget(body.url)
+    const isSupabaseUrlCheck = restTarget !== null
     const hasSupabaseBody = body.jsonBody || body.method === 'POST' || body.method === 'PATCH'
 
+    // A Supabase-bound request is forwarded as the caller, never as the service role. Resolving
+    // the identity here (rather than inside each branch) also means an unauthenticated caller is
+    // rejected before any outbound request is made on their behalf.
+    let caller: CallerIdentity | null = null
+    if (isSupabaseUrlCheck) {
+      caller = await resolveCallerIdentity(callerSessionToken(req, body), supabaseAnonKey)
+      if (!caller) {
+        console.error('[Proxy] ❌ Supabase request without a valid caller session')
+        return unauthorizedSession(corsHeaders)
+      }
+    } else if (typeof body.url === 'string' && body.url.includes('/rest/v1/')) {
+      // A REST URL that did not resolve is either off-project or names a table/RPC outside the
+      // allowlist. Say so explicitly instead of falling through to the generic "invalid URL".
+      console.error('[Proxy] ❌ Supabase REST target not on the allowlist')
+      return new Response(
+        JSON.stringify({ error: 'Forbidden', message: 'This Supabase table or RPC is not reachable through the proxy.', code: 'target_not_allowed' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
+      )
+    }
+
     // Handle Supabase POST/PATCH requests with JSON body
-    if (isSupabaseUrlCheck && hasSupabaseBody && body.jsonBody) {
-      let requestMethod = body.method || 'POST'
+    if (isSupabaseUrlCheck && hasSupabaseBody && body.jsonBody && caller) {
+      const requestMethod = body.method === 'PATCH' ? 'PATCH' : 'POST'
 
       const supabaseHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'Unity Supabase Integration'
+        'User-Agent': 'Unity Supabase Integration',
+        // Publishable key for gateway routing; the caller's own JWT for authorization. RLS and
+        // the SECURITY DEFINER functions decide what this user may touch.
+        'apikey': defaultPublishableKey(supabaseAnonKey) ?? '',
+        'Authorization': `Bearer ${caller.token}`
       }
-
-      if (body.apikey) supabaseHeaders['apikey'] = body.apikey
 
       // For POST requests, use upsert to prevent 409 conflicts
       // This automatically handles unique constraint violations
-      if (requestMethod === 'POST' && !body.prefer) {
-        // Use merge-duplicates to handle conflicts gracefully
+      const preferOverride = sanitizePrefer(body.prefer)
+      if (preferOverride) {
+        supabaseHeaders['Prefer'] = preferOverride
+      } else if (requestMethod === 'POST') {
         supabaseHeaders['Prefer'] = 'resolution=merge-duplicates'
-      } else if (body.prefer) {
-        supabaseHeaders['Prefer'] = body.prefer
       }
 
       console.log(`[Proxy] Forwarding ${requestMethod} request to Supabase: ${body.url}`)
@@ -1015,7 +1365,7 @@ async function handleProxy(req: Request, corsHeaders: Record<string, string>, su
 
         if (uniqueKey) {
           // Retry with PATCH using the unique key
-          const patchUrl = `${body.url}?id=eq.${uniqueKey}`
+          const patchUrl = `${body.url}?id=eq.${encodeURIComponent(String(uniqueKey))}`
           console.log(`[Proxy] Retrying with PATCH to: ${patchUrl}`)
 
           // Remove resolution header for PATCH (PATCH is inherently an update)
@@ -1169,12 +1519,12 @@ async function handleProxy(req: Request, corsHeaders: Record<string, string>, su
       requestHeaders['Authorization'] = body.authorization
     }
 
-    if (isSupabaseUrlCheck && body.apikey) {
-      requestHeaders['apikey'] = body.apikey
-    }
-
-    if (isSupabaseUrlCheck && body.prefer) {
-      requestHeaders['Prefer'] = body.prefer
+    if (isSupabaseUrlCheck && caller) {
+      // Same rule as the write path: publishable key for routing, caller's JWT for authorization.
+      requestHeaders['apikey'] = defaultPublishableKey(supabaseAnonKey) ?? ''
+      requestHeaders['Authorization'] = `Bearer ${caller.token}`
+      const preferOverride = sanitizePrefer(body.prefer)
+      if (preferOverride) requestHeaders['Prefer'] = preferOverride
     }
 
     const response = await fetch(body.url, {
@@ -1225,7 +1575,7 @@ async function handleProxy(req: Request, corsHeaders: Record<string, string>, su
 }
 
 // ============================================================================
-// Player Profile Handlers (Viznity Desktop App cloud profile sync)
+// Player Profile Handlers (Desktop App cloud profile sync)
 // ============================================================================
 //
 // Reads/writes the public.player_profiles table (see supabase/schema.sql). The service role
@@ -1234,14 +1584,18 @@ async function handleProxy(req: Request, corsHeaders: Record<string, string>, su
 // desktop app authenticates to this function with the public SUPABASE_ANON_KEY only, same as
 // the token-exchange and proxy routes above.
 
-async function handleGetProfile(url: URL, corsHeaders: Record<string, string>): Promise<Response> {
-  const patreonId = url.searchParams.get('patreon_id')
-  if (!patreonId) {
-    return new Response(JSON.stringify({ error: 'Missing patreon_id' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
+async function handleGetProfile(
+  req: Request,
+  _url: URL,
+  corsHeaders: Record<string, string>,
+  supabaseAnonKey: string | undefined,
+): Promise<Response> {
+  // The row is chosen by the identity the caller proved, never by a request parameter. The old
+  // behaviour keyed off `?patreon_id=` and gated only on the publishable key, so anyone holding
+  // that key could walk sequential Patreon ids and read every player's cloud profile.
+  const caller = await resolveCallerIdentity(callerSessionToken(req), supabaseAnonKey)
+  if (!caller) return unauthorizedSession(corsHeaders)
+  const patreonId = caller.patreonId
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
@@ -1269,7 +1623,16 @@ async function handleGetProfile(url: URL, corsHeaders: Record<string, string>): 
   })
 }
 
-async function handleSaveProfile(req: Request, corsHeaders: Record<string, string>): Promise<Response> {
+/** Columns a client may set on its own profile row. Everything else (timestamps, and any column
+ *  added to this table later) is server-managed — forwarding the request body verbatim would let
+ *  a caller write whatever the schema happens to expose. */
+const PROFILE_WRITABLE_COLUMNS = ['username', 'avatar_url', 'patron_status', 'settings', 'favorite_game_id'] as const
+
+async function handleSaveProfile(
+  req: Request,
+  corsHeaders: Record<string, string>,
+  supabaseAnonKey: string | undefined,
+): Promise<Response> {
   let body: Record<string, unknown>
   try {
     body = await req.json()
@@ -1280,12 +1643,23 @@ async function handleSaveProfile(req: Request, corsHeaders: Record<string, strin
     })
   }
 
-  if (!body.patreon_id) {
-    return new Response(JSON.stringify({ error: 'Missing patreon_id' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+  // Same rule as the read path: the row written is the caller's own. A `patreon_id` in the body
+  // is only accepted when it matches, so a stale client sending it is not silently redirected.
+  const caller = await resolveCallerIdentity(callerSessionToken(req, body), supabaseAnonKey)
+  if (!caller) return unauthorizedSession(corsHeaders)
+
+  if (typeof body.patreon_id === 'string' && body.patreon_id !== caller.patreonId) {
+    return new Response(
+      JSON.stringify({ error: 'Forbidden', message: 'Cannot write another user’s profile.', code: 'patreon_id_mismatch' }),
+      { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
   }
+
+  const row: Record<string, unknown> = { patreon_id: caller.patreonId }
+  for (const column of PROFILE_WRITABLE_COLUMNS) {
+    if (column in body) row[column] = body[column]
+  }
+  body = row
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
@@ -1325,16 +1699,43 @@ async function handleSaveProfile(req: Request, corsHeaders: Record<string, strin
 // Authorization Helper
 // ============================================================================
 
-function verifyAnonKey(authHeader: string | null, supabaseAnonKey: string | undefined): boolean {
-  if (!authHeader || !supabaseAnonKey) {
+function getPublishableKeys(secret: string | undefined): string[] {
+  if (!secret) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(secret)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return Object.values(parsed)
+        .filter((value): value is string => typeof value === 'string' && value.startsWith('sb_publishable_'))
+    }
+  } catch {
+    // The default Supabase secret is JSON. Do not accept non-JSON fallback values.
+  }
+
+  return []
+}
+
+/** The publishable key itself, extracted from the JSON secret Supabase injects.
+ *
+ *  `SUPABASE_PUBLISHABLE_KEYS` is a dictionary, so the raw secret is never a usable header value;
+ *  anywhere this function calls back into Supabase with an `apikey`, it needs this instead. */
+function defaultPublishableKey(publishableKeysSecret: string | undefined): string | undefined {
+  const keys = getPublishableKeys(publishableKeysSecret)
+  return keys[0]
+}
+
+function verifyAnonKey(authHeader: string | null, publishableKeysSecret: string | undefined): boolean {
+  const publishableKeys = getPublishableKeys(publishableKeysSecret)
+  if (!authHeader || publishableKeys.length === 0) {
     return false
   }
 
   // Remove "Bearer " prefix if present
   const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader
 
-  // Compare with SUPABASE_ANON_KEY
-  return token === supabaseAnonKey
+  return publishableKeys.includes(token)
 }
 
 serve(async (req) => {
@@ -1342,8 +1743,9 @@ serve(async (req) => {
   const url = new URL(req.url)
   const authHeader = req.headers.get('authorization')
 
-  // Get SUPABASE_ANON_KEY from environment (set in Supabase Dashboard)
-  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
+  // Supabase provides this as a JSON dictionary, for example:
+  // { "default": "sb_publishable_..." }
+  const supabaseAnonKey = Deno.env.get('SUPABASE_PUBLISHABLE_KEYS')
 
   // CRITICAL DEBUG: Log everything at the start
   console.log(`[Main] ========================================`)
@@ -1354,7 +1756,7 @@ serve(async (req) => {
   console.log(`[Main] Search: ${url.search}`)
   console.log(`[Main] Origin: ${origin || 'none'}`)
   console.log(`[Main] Authorization: ${authHeader ? 'present' : 'missing'}`)
-  console.log(`[Main] SUPABASE_ANON_KEY configured: ${supabaseAnonKey ? 'yes' : 'no'}`)
+  console.log(`[Main] SUPABASE_PUBLISHABLE_KEYS configured: ${supabaseAnonKey ? 'yes' : 'no'}`)
 
   // Get action from query parameter (needed for redirect check)
   // Note: Supabase Edge Functions don't support path-based routing,
@@ -1465,6 +1867,9 @@ serve(async (req) => {
   } else if (action === 'token-refresh') {
     route = 'token-refresh'
     console.log(`[Main] Route determined: token-refresh`)
+  } else if (action === 'verify-game-access') {
+    route = 'verify-game-access'
+    console.log(`[Main] Route determined: verify-game-access`)
   } else {
     // Default to redirect for GET requests or when no action specified
     // This handles OAuth callbacks (GET with code and state params)
@@ -1496,7 +1901,7 @@ serve(async (req) => {
       })
     } else if (route === 'get-profile') {
       console.log(`[Main] ✅ Routing GET request to get-profile handler`)
-      return handleGetProfile(url, getCorsHeaders(origin, 'GET, OPTIONS'))
+      return handleGetProfile(req, url, getCorsHeaders(origin, 'GET, OPTIONS'), supabaseAnonKey)
     } else {
       // GET request with action=token-exchange or action=proxy is invalid
       console.error(`[Main] ❌ ERROR: GET request with invalid action: ${action}`)
@@ -1544,7 +1949,7 @@ serve(async (req) => {
       return handleTokenExchange(req, getCorsHeaders(origin, 'POST, OPTIONS'), supabaseAnonKey)
     } else if (route === 'save-profile') {
       console.log(`[Main] ✅ Routing POST request to save-profile handler`)
-      return handleSaveProfile(req, getCorsHeaders(origin, 'POST, OPTIONS'))
+      return handleSaveProfile(req, getCorsHeaders(origin, 'POST, OPTIONS'), supabaseAnonKey)
     } else if (route === 'proxy') {
       // API proxy
       console.log(`[Main] ✅ Routing POST request to proxy handler`)
@@ -1560,13 +1965,16 @@ serve(async (req) => {
     } else if (route === 'token-refresh') {
       console.log(`[Main] ✅ Routing POST request to token-refresh handler`)
       return handleTokenRefresh(req, getCorsHeaders(origin, 'POST, OPTIONS'), supabaseAnonKey)
+    } else if (route === 'verify-game-access') {
+      console.log(`[Main] ✅ Routing POST request to verify-game-access handler`)
+      return handleVerifyGameAccess(req, getCorsHeaders(origin, 'POST, OPTIONS'), supabaseAnonKey)
     } else {
       // POST request without action or with invalid action
       console.error(`[Main] ❌ ERROR: POST request without valid action - action: ${action || 'none'}`)
       return new Response(
         JSON.stringify({
           error: 'Invalid request',
-          message: `POST requests require ?action=token-exchange, ?action=proxy, ?action=create-handoff, ?action=redeem-handoff, ?action=token-refresh, or ?action=supabase-session. Received: ${action || 'none'}`
+          message: `POST requests require ?action=token-exchange, ?action=proxy, ?action=create-handoff, ?action=redeem-handoff, ?action=token-refresh, ?action=verify-game-access, or ?action=supabase-session. Received: ${action || 'none'}`
         }),
         {
           headers: {
