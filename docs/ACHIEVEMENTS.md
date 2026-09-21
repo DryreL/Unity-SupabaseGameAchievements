@@ -169,8 +169,8 @@ from **Tools → DryreL Hub → Supabase Game Achievements → Manage Achievemen
 - `retire_achievement(p_achievement_id bigint)` — sets `is_retired = true`. Idempotent. This is the
   normal way to remove an achievement from play; its `bit_index` stays reserved forever.
 - `delete_retired_achievement(p_achievement_id bigint)` — hard delete. Refuses unless the achievement is
-  already retired *and* has zero rows in `user_achievements`, so it can only remove a mistake that never
-  shipped and was never earned, never a real removal or anything a player has. On success it frees the
+  already retired *and* appears in no player's `user_achievements.achievement_ids` array, so it can only
+  remove a mistake that never shipped and was never earned, never a real removal or anything a player has. On success it frees the
   `bit_index` for reuse (the only sanctioned way past `achievements_guard_identity`'s delete guard).
 
 ---

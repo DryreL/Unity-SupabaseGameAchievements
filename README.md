@@ -88,7 +88,8 @@ returns nothing, but syncing works.)
 ### Adding achievements later
 
 Achievements are always created **in Supabase** (the database is the canonical catalog); the JSON in
-the game is only an exported copy. Use the SQL editor, or Table Editor → `achievements` → Insert row
+the game is only an exported copy. The easiest way is **Tools → DryreL Hub → Supabase Game Achievements
+→ Achievement Dashboard** (below); or use the SQL editor, or Table Editor → `achievements` → Insert row
 (leave `id`, `created_at` empty). First find the next free bit index. It counts retired rows too,
 so an index is never reused:
 
@@ -339,12 +340,38 @@ All under **Tools → DryreL Hub → Supabase Game Achievements**:
 
 | Menu item | What it does |
 |---|---|
+| Achievement Dashboard | Create and edit every `achievements` column in one window (the **+** button adds one), autosaved in the project, pushed to Supabase from the Editor, and turned into the manifest file. See below. |
 | Import Achievement Catalog | Parses an achievements.json manifest and imports it to Supabase via REST API (needs a service key) or generates an idempotent SQL script. |
 | Export Achievement Catalog | Pulls one game's catalog from Supabase and writes the manifest JSON (see step 3a). |
 | Manage Achievements | Retires or (with confirmation, only if already retired and never unlocked) permanently deletes an achievement. Needs a service/secret key. |
 | Achievement Debug Window | Play Mode only. Lists every achievement in the running game with an Unlock button, plus Sync Now / Reconcile From Server, with live pending/unlocked counts - a quick way to exercise `AchievementManager` without writing test code. |
 
 The Patreon sample adds one more once imported: **Setup Achievements (Patreon) In Scene** (see step 6).
+
+### Achievement Dashboard
+
+1. Open **Connection & files**, enter the Supabase URL (auto-filled from `PatreonConfig` if present), a
+   service/secret key (kept for the session, never saved to disk) and the game slug, then **Connect & Pull**.
+   If the game does not exist yet, **Create Game** adds it (inactive until you set `is_active = true`).
+2. **+ Add Achievement** creates a card with the next free bit index (retired ones count) and an icon path of
+   `<Icon Folder>/<key>`. The **Icon Folder** setting defaults to `images`, so with the `Achievements/` icon
+   prefix the sprite goes to `Assets/Resources/Achievements/images/<key>.png`; rename the folder there if you
+   prefer another name (paths of not-yet-pushed cards follow). Fill in key,
+   title, description, icons, hidden/retired, display order and the optional localization fields. Fields are
+   checked against the database constraints as you type.
+3. Everything is **autosaved** to `ProjectSettings/DryreLHub.AchievementDashboard.json` (change it under
+   *Data File*; commit it if your team shares the catalog). One file per game.
+4. **Push** (toolbar, or per card) sends new entries as inserts and remembers the server id Supabase returns.
+   Editing that achievement later and pushing again **updates the same row** - a card shows *Modified* until
+   you do. `key` and `bit_index` are locked after the first push because the database refuses to change them.
+   Pushing is Editor-only; a game build never contains a write path or a key.
+5. **Manifest** writes the game's `achievements.json` (default `Assets/Resources/Achievements/achievements.json`)
+   from the dashboard, with the catalog version Supabase reported after your last push. Entries that were
+   never pushed have no server id yet, so they are left out (the window warns you).
+6. **Pull** refreshes from Supabase; cards with unsent local edits keep those edits.
+
+The dashboard never deletes: retire an achievement with its **Retired** checkbox, and use *Manage
+Achievements* for the rare permanent delete.
 
 ## Threading
 

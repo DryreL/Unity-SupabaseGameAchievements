@@ -47,8 +47,8 @@ grant execute on function public.retire_achievement(bigint) to service_role;
 -- bit_index can never be freed and reused by accident. This function is the one sanctioned way past
 -- that guard, and only for a row that:
 --   1. Is already retired (never delete a live achievement out from under a shipped client).
---   2. Has no unlock rows in user_achievements (never delete an achievement anyone has actually earned;
---      that data belongs to players and must survive catalog cleanup).
+--   2. Is in no player's unlocked-id array in user_achievements (never delete an achievement anyone has
+--      actually earned; that data belongs to players and must survive catalog cleanup).
 -- Deleting a genuinely never-shipped/never-earned mistake this way is safe: its bit_index is freed
 -- correctly (no achievement ever referenced it in a released build), unlike retiring, which burns the
 -- bit_index forever on purpose.
@@ -78,7 +78,11 @@ begin
       using errcode = 'P0001';
   end if;
 
-  select count(*) into v_unlock_count from public.user_achievements where achievement_id = p_achievement_id;
+  -- user_achievements holds one row per (user, game) with an id array, not one row per unlock. Count the
+  -- rows whose array contains this id (the GIN index on achievement_ids serves the @> lookup).
+  select count(*) into v_unlock_count
+    from public.user_achievements
+   where achievement_ids @> array[p_achievement_id];
   if v_unlock_count > 0 then
     raise exception 'achievement % (%) has % player unlock(s) and cannot be deleted; leave it retired', p_achievement_id, v_key, v_unlock_count
       using errcode = 'P0001';
