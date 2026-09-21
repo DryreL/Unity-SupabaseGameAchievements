@@ -25,12 +25,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private AchievementOverlaySettings _overlay = AchievementOverlaySettings.CreateDefault();
         private bool _overlayLoaded;
         private bool _overlayFileExists;
-        private string _overlayLoadError;
-        private string _overlaySaveError;
+        [NonSerialized] private string _overlayLoadError;
+        [NonSerialized] private string _overlaySaveError;
         private bool _overlayDirty;
         private double _overlaySaveAt;
         private Vector2 _overlayScroll;
-        private string _overlayNote;
+        [NonSerialized] private string _overlayNote;
         private double _previewStart = -1;
         private GameObject _toastPrefabAsset;
         private List<ToastCheck> _toastChecks = new List<ToastCheck>();
@@ -85,7 +85,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         private void SaveOverlayNow()
         {
-            if (_overlayLoadError != null) { _overlayDirty = false; return; }
+            if (!string.IsNullOrEmpty(_overlayLoadError)) { _overlayDirty = false; return; }
 
             try
             {
@@ -101,7 +101,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             catch (Exception e)
             {
                 string described = DashboardData.Describe(e);
-                if (_overlaySaveError == null) Debug.LogError("[Achievements] Could not save overlay.json:\n" + e);
+                if (string.IsNullOrEmpty(_overlaySaveError)) Debug.LogError("[Achievements] Could not save overlay.json:\n" + e);
                 _overlaySaveError = "Could not save overlay.json: " + described;
                 _overlaySaveAt = EditorApplication.timeSinceStartup + 1.0; // try again
             }
@@ -132,8 +132,8 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 GUILayout.Space(8);
             }
 
-            if (_overlayLoadError != null) DrawErrorBox(_overlayLoadError);
-            if (_overlaySaveError != null) DrawErrorBox(_overlaySaveError);
+            if (!string.IsNullOrEmpty(_overlayLoadError)) DrawErrorBox(_overlayLoadError);
+            if (!string.IsNullOrEmpty(_overlaySaveError)) DrawErrorBox(_overlaySaveError);
 
             using (var scroll = new EditorGUILayout.ScrollViewScope(_overlayScroll))
             {
@@ -154,7 +154,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             DrawPreview();
             DrawLiveControls();
 
-            using (new EditorGUI.DisabledScope(_overlayLoadError != null))
+            using (new EditorGUI.DisabledScope(!string.IsNullOrEmpty(_overlayLoadError)))
             {
                 EditorGUI.BeginChangeCheck();
 

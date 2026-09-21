@@ -38,11 +38,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private string _supabaseUrl = "";
         private string _serviceKey = ""; // session-only, never persisted
         private DashboardData _data = new DashboardData();
-        private string _loadError;
+        // Unity gives string fields of a restored (docked) window the value "" instead of null after a domain reload, so a
+        // "there is an error" test must be IsNullOrEmpty, and these are never serialized.
+        [NonSerialized] private string _loadError;
 
         private bool _saveDue;
         private double _saveAt;
-        private string _saveError;
+        [NonSerialized] private string _saveError;
         private DateTime? _lastSaved;
 
         // A failed save is retried every second. It is only shown once it has kept failing for this long, so a
@@ -50,7 +52,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private const double SaveFailureGraceSeconds = 6.0;
         private double _saveFailingSince;
 
-        private bool SaveFailureVisible => _saveError != null && EditorApplication.timeSinceStartup - _saveFailingSince >= SaveFailureGraceSeconds;
+        private bool SaveFailureVisible => !string.IsNullOrEmpty(_saveError) && EditorApplication.timeSinceStartup - _saveFailingSince >= SaveFailureGraceSeconds;
 
         private Vector2 _scroll;
         private string _search = "";
@@ -192,7 +194,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             {
                 string described = DashboardData.Describe(e);
                 if (_saveError != described) Debug.LogError("[Achievements] Could not save the dashboard file '" + _dataPath + "':\n" + e);
-                if (_saveError == null) _saveFailingSince = EditorApplication.timeSinceStartup;
+                if (string.IsNullOrEmpty(_saveError)) _saveFailingSince = EditorApplication.timeSinceStartup;
                 _saveError = described;
 
                 // Keep trying: the cause is usually a lock that clears on its own, and until a save succeeds the
