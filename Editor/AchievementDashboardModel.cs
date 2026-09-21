@@ -274,6 +274,10 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         public static DashboardData Load(string fullPath)
         {
+            // A save that died between writing the temp file and swapping it in leaves the newest copy in ".tmp".
+            string temp = fullPath + ".tmp";
+            if (!File.Exists(fullPath) && File.Exists(temp)) fullPath = temp;
+
             if (!File.Exists(fullPath)) return new DashboardData();
             var data = JsonConvert.DeserializeObject<DashboardData>(File.ReadAllText(fullPath, Encoding.UTF8));
             if (data == null) return new DashboardData();
@@ -286,7 +290,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             return data;
         }
 
-        /// <summary>Writes atomically (temp file + replace) so a crash mid-save never truncates the saved catalog.</summary>
+        /// <summary>
+        /// Writes the temp file first, then swaps it in, so a crash mid-save never truncates the saved catalog.
+        /// Windows refuses the swap while something briefly holds the destination (an antivirus scan, a sync
+        /// client, the indexer), so it retries and falls back to copying over the file; the temp file survives a
+        /// failed swap and <see cref="Load"/> recovers from it.
+        /// </summary>
         public void Save(string fullPath)
         {
             string json = JsonConvert.SerializeObject(this, Formatting.Indented) + "\n";
@@ -295,9 +304,41 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             string temp = fullPath + ".tmp";
             File.WriteAllText(temp, json, new UTF8Encoding(false));
-            if (File.Exists(fullPath)) File.Replace(temp, fullPath, null);
-            else File.Move(temp, fullPath);
+
+            Exception last = null;
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(fullPath)) File.Replace(temp, fullPath, null);
+                    else File.Move(temp, fullPath);
+                    return;
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    last = e;
+                }
+
+                try
+                {
+                    File.Copy(temp, fullPath, true);
+                    File.Delete(temp);
+                    return;
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    last = e;
+                }
+
+                System.Threading.Thread.Sleep(40 * (attempt + 1));
+            }
+
+            throw new IOException("Could not replace '" + fullPath + "': " + Describe(last), last);
         }
+
+        /// <summary>An exception as text that is never blank (some IO errors come with an empty message).</summary>
+        public static string Describe(Exception e) =>
+            e == null ? "unknown error" : e.GetType().Name + (string.IsNullOrWhiteSpace(e.Message) ? " (no message, HRESULT 0x" + e.HResult.ToString("X8") + ")" : ": " + e.Message);
 
         [JsonIgnore]
         public IEnumerable<DashboardAchievement> Pending => Achievements.Where(a => a.State != DashboardSyncState.Synced);

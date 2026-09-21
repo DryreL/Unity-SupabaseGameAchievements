@@ -896,6 +896,98 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             }
         }
 
+        private static string TempDashboardPath() =>
+            Path.Combine(Path.GetTempPath(), "dashboard-" + System.Guid.NewGuid().ToString("N") + ".json");
+
+        private static void Cleanup(string path)
+        {
+            File.Delete(path);
+            File.Delete(path + ".tmp");
+        }
+
+        [Test]
+        public void Save_retries_while_something_briefly_holds_the_file_and_then_succeeds()
+        {
+            string path = TempDashboardPath();
+            try
+            {
+                var data = Connected();
+                data.Save(path);
+                data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "a", 0)));
+
+                // Windows locks a file opened with FileShare.None: the swap fails until it is released.
+                var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+                var release = new System.Threading.Thread(() => { System.Threading.Thread.Sleep(50); held.Dispose(); });
+                release.Start();
+
+                Assert.DoesNotThrow(() => data.Save(path));
+                release.Join();
+
+                Assert.AreEqual(1, DashboardData.Load(path).Achievements.Count, "the retry wrote the new content");
+                Assert.IsFalse(File.Exists(path + ".tmp"));
+            }
+            finally
+            {
+                Cleanup(path);
+            }
+        }
+
+        [Test]
+        public void A_save_that_cannot_swap_reports_why_and_keeps_the_newest_copy_in_the_temp_file()
+        {
+            string path = TempDashboardPath();
+            try
+            {
+                var data = Connected();
+                data.Save(path);
+                data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "a", 0)));
+
+                using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    var error = Assert.Throws<IOException>(() => data.Save(path));
+
+                    StringAssert.Contains("Could not replace", error.Message);
+                    Assert.IsTrue(File.Exists(path + ".tmp"), "nothing is lost: the newest state is in the temp file");
+                }
+            }
+            finally
+            {
+                Cleanup(path);
+            }
+        }
+
+        [Test]
+        public void Load_recovers_from_the_temp_file_when_the_swap_died_halfway()
+        {
+            string path = TempDashboardPath();
+            try
+            {
+                var data = Connected();
+                data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "a", 0)));
+                data.Save(path);
+                File.Move(path, path + ".tmp"); // the state a crash between "write temp" and "swap in" leaves behind
+
+                var loaded = DashboardData.Load(path);
+
+                Assert.AreEqual(1, loaded.Achievements.Count);
+            }
+            finally
+            {
+                Cleanup(path);
+            }
+        }
+
+        [Test]
+        public void An_exception_description_is_never_blank()
+        {
+            var blank = new IOException("");
+
+            Assert.IsNotEmpty(DashboardData.Describe(blank));
+            StringAssert.Contains("IOException", DashboardData.Describe(blank));
+            StringAssert.Contains("disk is full", DashboardData.Describe(new IOException("disk is full")));
+            Assert.IsNotEmpty(DashboardData.Describe(null));
+        }
+
         [Test]
         public void A_missing_file_loads_as_an_empty_dashboard()
         {

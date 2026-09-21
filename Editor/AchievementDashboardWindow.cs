@@ -139,7 +139,14 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             }
             catch (Exception e)
             {
-                _saveError = e.Message;
+                string described = DashboardData.Describe(e);
+                if (_saveError != described) Debug.LogWarning("[Achievements] Could not save the dashboard file '" + _dataPath + "': " + described);
+                _saveError = described;
+
+                // Keep trying: the cause is usually a lock that clears on its own, and until a save succeeds the
+                // newest edits exist only in memory.
+                _saveDue = true;
+                _saveAt = EditorApplication.timeSinceStartup + 2.0;
             }
         }
 
