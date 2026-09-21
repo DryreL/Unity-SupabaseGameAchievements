@@ -336,6 +336,39 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             throw new IOException("Could not replace '" + fullPath + "': " + Describe(last), last);
         }
 
+        /// <summary>
+        /// Moves a dashboard file from its old location to a new one: loads it (recovering from a leftover temp file),
+        /// saves it at the target, checks the copy reads back, and only then deletes the old files. Does nothing when the
+        /// target already exists or there is nothing to move; on any failure the old file is left untouched.
+        /// </summary>
+        /// <returns>True when a file was moved.</returns>
+        public static bool MigrateFile(string legacyFullPath, string targetFullPath, out string message)
+        {
+            message = null;
+            if (File.Exists(targetFullPath)) return false;
+            if (!File.Exists(legacyFullPath) && !File.Exists(legacyFullPath + ".tmp")) return false;
+
+            try
+            {
+                var data = Load(legacyFullPath);
+                data.Save(targetFullPath);
+
+                var copy = Load(targetFullPath);
+                if (copy.Achievements.Count != data.Achievements.Count || copy.Rules.Count != data.Rules.Count)
+                    throw new InvalidDataException("the copy did not read back the same");
+
+                File.Delete(legacyFullPath);
+                File.Delete(legacyFullPath + ".tmp");
+                message = "Moved the dashboard file to " + targetFullPath + ".";
+                return true;
+            }
+            catch (Exception e)
+            {
+                message = "Could not move the dashboard file (" + Describe(e) + "); it stays where it was.";
+                return false;
+            }
+        }
+
         /// <summary>An exception as text that is never blank (some IO errors come with an empty message).</summary>
         public static string Describe(Exception e) =>
             e == null ? "unknown error" : e.GetType().Name + (string.IsNullOrWhiteSpace(e.Message) ? " (no message, HRESULT 0x" + e.HResult.ToString("X8") + ")" : ": " + e.Message);

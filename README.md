@@ -485,8 +485,10 @@ The Patreon sample adds one more once imported: **Setup Achievements (Patreon) I
    prefer another name (paths of not-yet-pushed cards follow). Fill in key,
    title, description, icons, hidden/retired, display order and the optional localization fields. Fields are
    checked against the database constraints as you type.
-3. Everything is **autosaved** to `ProjectSettings/DryreLHub.AchievementDashboard.json` (change it under
-   *Data File*; commit it if your team shares the catalog). One file per game.
+3. Everything is **autosaved** to `Assets/Resources/Achievements/dashboard.json`, next to `achievements.json` and
+   `rules.json` (an older `ProjectSettings/DryreLHub.AchievementDashboard.json` is moved there automatically). It is
+   editor bookkeeping only (no keys), but like everything under `Resources` it ends up in builds. Change it under
+   *Data File* if you would rather keep it elsewhere; commit it if your team shares the catalog. One file per game.
 4. **Push** (toolbar, or per card) sends new entries as inserts and remembers the server id Supabase returns.
    Editing that achievement later and pushing again **updates the same row** - a card shows *Modified* until
    you do. `key` and `bit_index` are locked after the first push because the database refuses to change them.

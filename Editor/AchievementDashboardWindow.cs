@@ -25,7 +25,9 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
     public sealed partial class AchievementDashboardWindow : EditorWindow
     {
         private const string PrefsPrefix = "DryreLHub.Achievements.Dashboard.";
-        private const string DefaultDataPath = "ProjectSettings/DryreLHub.AchievementDashboard.json";
+        // Next to achievements.json and rules.json, so the whole catalog lives in one folder.
+        private const string DefaultDataPath = "Assets/Resources/Achievements/dashboard.json";
+        private const string LegacyDataPath = "ProjectSettings/DryreLHub.AchievementDashboard.json";
         private const double AutosaveDelaySeconds = 0.6;
         private const int IconCacheLimit = 256;
 
@@ -85,8 +87,30 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         {
             _supabaseUrl = EditorPrefs.GetString(PrefsPrefix + "SupabaseUrl", "");
             _dataPath = EditorPrefs.GetString(PrefsPrefix + "DataPath", DefaultDataPath);
+            MoveLegacyDataFile();
             LoadDataFile();
             _showConnection = string.IsNullOrEmpty(_data.GameSlug) || _data.GameId <= 0;
+        }
+
+        // The file used to live in ProjectSettings. Anyone still pointing at that default is moved to the new one;
+        // if the move fails the old file keeps being used for this session, so nothing can be lost or overwritten.
+        private void MoveLegacyDataFile()
+        {
+            if (_dataPath != LegacyDataPath && _dataPath != DefaultDataPath) return;
+
+            bool moved = DashboardData.MigrateFile(ToFullPath(LegacyDataPath), ToFullPath(DefaultDataPath), out string message);
+            bool legacyStillThere = File.Exists(ToFullPath(LegacyDataPath)) || File.Exists(ToFullPath(LegacyDataPath) + ".tmp");
+
+            if (legacyStillThere && !File.Exists(ToFullPath(DefaultDataPath)))
+            {
+                _dataPath = LegacyDataPath; // could not move it: keep working on the old file
+            }
+            else
+            {
+                _dataPath = DefaultDataPath;
+                EditorPrefs.SetString(PrefsPrefix + "DataPath", _dataPath);
+            }
+            if (message != null) SetStatus(message, moved ? MessageType.Info : MessageType.Warning);
         }
 
         private void OnDisable()

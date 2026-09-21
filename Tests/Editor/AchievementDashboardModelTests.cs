@@ -978,6 +978,89 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
         }
 
         [Test]
+        public void The_dashboard_file_is_moved_to_its_new_location_and_the_old_one_removed()
+        {
+            string legacy = TempDashboardPath();
+            string target = Path.Combine(Path.GetTempPath(), "moved-" + System.Guid.NewGuid().ToString("N"), "Achievements", "dashboard.json");
+            try
+            {
+                var data = Connected();
+                data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "a", 0)));
+                data.AddRule("a");
+                data.Save(legacy);
+
+                bool moved = DashboardData.MigrateFile(legacy, target, out string message);
+
+                Assert.IsTrue(moved, message);
+                Assert.IsFalse(File.Exists(legacy));
+                var loaded = DashboardData.Load(target);
+                Assert.AreEqual(1, loaded.Achievements.Count);
+                Assert.AreEqual(1, loaded.Rules.Count, "rules and hookups move too");
+                Assert.AreEqual(7, loaded.GameId);
+            }
+            finally
+            {
+                Cleanup(legacy);
+                if (File.Exists(target)) Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(target)), true);
+            }
+        }
+
+        [Test]
+        public void An_existing_new_file_is_never_overwritten_by_the_move()
+        {
+            string legacy = TempDashboardPath();
+            string target = TempDashboardPath();
+            try
+            {
+                var old = Connected();
+                old.Achievements.Add(DashboardAchievement.FromRow(ServerRow(1, "old", 0)));
+                old.Save(legacy);
+                Connected().Save(target); // the new location already has its own file
+
+                Assert.IsFalse(DashboardData.MigrateFile(legacy, target, out _));
+
+                Assert.AreEqual(0, DashboardData.Load(target).Achievements.Count, "the new file is untouched");
+                Assert.IsTrue(File.Exists(legacy), "and the old one is kept");
+            }
+            finally
+            {
+                Cleanup(legacy);
+                Cleanup(target);
+            }
+        }
+
+        [Test]
+        public void Moving_when_there_is_nothing_to_move_does_nothing()
+        {
+            string target = TempDashboardPath();
+            Assert.IsFalse(DashboardData.MigrateFile(TempDashboardPath(), target, out string message));
+            Assert.IsNull(message);
+            Assert.IsFalse(File.Exists(target));
+        }
+
+        [Test]
+        public void A_move_that_fails_leaves_the_old_file_where_it_was()
+        {
+            string legacy = TempDashboardPath();
+            string target = TempDashboardPath();
+            try
+            {
+                File.WriteAllText(legacy, "{ this is not json");
+
+                Assert.IsFalse(DashboardData.MigrateFile(legacy, target, out string message));
+
+                StringAssert.Contains("stays where it was", message);
+                Assert.IsTrue(File.Exists(legacy), "never delete what could not be read");
+                Assert.IsFalse(File.Exists(target));
+            }
+            finally
+            {
+                Cleanup(legacy);
+                Cleanup(target);
+            }
+        }
+
+        [Test]
         public void An_exception_description_is_never_blank()
         {
             var blank = new IOException("");
