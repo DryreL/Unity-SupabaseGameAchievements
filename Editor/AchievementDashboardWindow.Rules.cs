@@ -51,7 +51,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private bool _rulesFileMissing;
         private bool _rulesFileStale;
 
-        private void OnHierarchyChange() => _nextBindingScan = 0;
+        private void OnHierarchyChange()
+        {
+            _nextBindingScan = 0;
+            _setup = null; // a bootstrap added to (or removed from) an open scene counts right away
+        }
 
         private void RefreshBindingScan()
         {

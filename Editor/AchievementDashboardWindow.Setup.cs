@@ -10,11 +10,18 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
     /// </summary>
     public sealed partial class AchievementDashboardWindow
     {
+        // What is saved in the project (the slow part, kept until a scene is saved or opened, or "Check again"),
+        // and that plus the scenes open right now (rebuilt on every hierarchy change, so an unsaved bootstrap counts).
+        private AchievementRuntimeSetup.Report _setupOnDisk;
         private AchievementRuntimeSetup.Report _setup;
 
         private void DrawGameSetup()
         {
-            if (_setup == null) _setup = AchievementRuntimeSetup.Scan();
+            if (_setup == null)
+            {
+                if (_setupOnDisk == null) _setupOnDisk = AchievementRuntimeSetup.Scan();
+                _setup = AchievementRuntimeSetup.Combine(_setupOnDisk);
+            }
 
             if (_setup.IsStarted)
             {
@@ -24,9 +31,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     string where = string.Join(", ", _setup.StartedBy.Take(3)) + (_setup.StartedBy.Count > 3 ? " (+" + (_setup.StartedBy.Count - 3) + " more)" : "");
                     GUILayout.Label(new GUIContent("Game setup: achievements are started by " + where + ".", string.Join("\n", _setup.StartedBy)), _styles.Mini);
                     GUILayout.FlexibleSpace();
-                    if (GUILayout.Button("Check again", EditorStyles.miniButton, GUILayout.Width(84))) _setup = null;
+                    if (GUILayout.Button("Check again", EditorStyles.miniButton, GUILayout.Width(84))) RecheckSetup();
                     GUILayout.Space(8);
                 }
+                if (_setup.HasUnsaved)
+                    EditorGUILayout.HelpBox("Save the scene (Ctrl+S): until then a build or another machine does not have the bootstrap.", MessageType.Info);
                 return;
             }
 
@@ -48,10 +57,10 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     GUILayout.Button(new GUIContent("Use the Patreon setup instead", "Adds the Patreon Integration sample's bootstrap, which also wires Patreon sign-in so unlocks sync."), GUILayout.Height(24)))
                 {
                     EditorApplication.ExecuteMenuItem("Tools/DryreL Hub/Supabase Game Achievements/Setup Achievements (Patreon) In Scene");
-                    _setup = null;
+                    RecheckSetup();
                 }
 
-                if (GUILayout.Button("Check again", GUILayout.Width(90), GUILayout.Height(24))) _setup = null;
+                if (GUILayout.Button("Check again", GUILayout.Width(90), GUILayout.Height(24))) RecheckSetup();
                 GUILayout.Space(8);
             }
         }
@@ -68,6 +77,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             var result = AchievementRuntimeSetup.AddBootstrapToActiveScene(manifest, _supabaseUrl, publishableKey);
             string note = manifest == null ? " No manifest was assigned (write it with the Manifest button; the bootstrap also finds Resources/Achievements/achievements.json)." : "";
             SetStatus(result.Message + note, result.Ok ? MessageType.Info : MessageType.Warning);
+            _setup = null; // the new object is in the open scene, so the next read sees it without touching the disk
+        }
+
+        private void RecheckSetup()
+        {
+            _setupOnDisk = null;
             _setup = null;
         }
     }

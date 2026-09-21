@@ -90,7 +90,18 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             MoveLegacyDataFile();
             LoadDataFile();
             _showConnection = string.IsNullOrEmpty(_data.GameSlug) || _data.GameId <= 0;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaved += OnSceneSavedOrOpened;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneOpened += OnSceneOpened;
         }
+
+        private void OnSceneSavedOrOpened(UnityEngine.SceneManagement.Scene scene)
+        {
+            _setupOnDisk = null;
+            _setup = null;
+            Repaint();
+        }
+
+        private void OnSceneOpened(UnityEngine.SceneManagement.Scene scene, UnityEditor.SceneManagement.OpenSceneMode mode) => OnSceneSavedOrOpened(scene);
 
         // The file used to live in ProjectSettings. Anyone still pointing at that default is moved to the new one;
         // if the move fails the old file keeps being used for this session, so nothing can be lost or overwritten.
@@ -115,6 +126,8 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         private void OnDisable()
         {
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaved -= OnSceneSavedOrOpened;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneOpened -= OnSceneOpened;
             if (_saveDue) SaveNow();
             foreach (var texture in _ownedTextures)
                 if (texture != null) DestroyImmediate(texture);
@@ -1127,7 +1140,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             var message = new StringBuilder();
             if (result.TablesCreated > 0) message.Append("Created " + result.TablesCreated + " string table(s) with " + result.Locales + " locale(s). ");
             message.Append(result.EntriesAdded + " entr" + (result.EntriesAdded == 1 ? "y" : "ies") + " added, " + result.EntriesKept + " already existed (left untouched). ");
-            message.Append("The new entries hold each achievement's current text in every locale: replace it with translations. ");
+            message.Append("The text went into the '" + result.SourceLocale + "' locale only; the other " + Math.Max(0, result.Locales - 1) + " have the keys, ready to translate. ");
             if (updated > 0) message.Append(updated + " achievement(s) now reference the table: push them to Supabase, then regenerate the manifest.");
             SetStatus(message.ToString().TrimEnd(), MessageType.Info);
         }

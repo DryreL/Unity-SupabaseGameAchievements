@@ -27,7 +27,48 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         public int EntriesKept;
         public int Locales;
 
+        /// <summary>The locale that received the text; the others got the key only, for translators to fill in.</summary>
+        public string SourceLocale;
+
         public static LocalizationSyncResult Fail(string message) => new LocalizationSyncResult { Ok = false, Message = message };
+    }
+
+    /// <summary>Which locales the Localize button creates tables for, and which one receives the text. Pure, so it is unit-tested.</summary>
+    internal static class LocalizationLocales
+    {
+        /// <summary>
+        /// Positions of the first occurrence of every locale code. A project can list the same locale twice (for example
+        /// a duplicated Addressables entry), and each duplicate would otherwise get its own "_en 1" table asset.
+        /// </summary>
+        public static List<int> DistinctIndexes(IReadOnlyList<string> codes)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var indexes = new List<int>();
+            for (int i = 0; i < codes.Count; i++)
+                if (seen.Add(codes[i] ?? string.Empty)) indexes.Add(i);
+            return indexes;
+        }
+
+        /// <summary>
+        /// The locale the achievement text is written in: the project locale if it is among the codes, else English,
+        /// else the first one. -1 when there are none.
+        /// </summary>
+        public static int PickSource(IReadOnlyList<string> codes, string projectLocaleCode)
+        {
+            if (codes.Count == 0) return -1;
+
+            int Find(Func<string, bool> match)
+            {
+                for (int i = 0; i < codes.Count; i++)
+                    if (codes[i] != null && match(codes[i])) return i;
+                return -1;
+            }
+
+            int found = string.IsNullOrEmpty(projectLocaleCode) ? -1 : Find(code => string.Equals(code, projectLocaleCode, StringComparison.OrdinalIgnoreCase));
+            if (found < 0) found = Find(code => string.Equals(code, "en", StringComparison.OrdinalIgnoreCase));
+            if (found < 0) found = Find(code => code.StartsWith("en-", StringComparison.OrdinalIgnoreCase));
+            return found < 0 ? 0 : found;
+        }
     }
 
     /// <summary>

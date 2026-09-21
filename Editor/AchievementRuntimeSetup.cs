@@ -22,7 +22,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             public readonly List<string> StartedBy = new List<string>();
 
             public bool IsStarted => StartedBy.Count > 0;
+
+            /// <summary>True when a bootstrap exists only in a scene that has not been saved yet.</summary>
+            public bool HasUnsaved => StartedBy.Any(entry => entry.EndsWith(UnsavedSuffix, StringComparison.Ordinal));
         }
+
+        internal const string UnsavedSuffix = " (not saved yet)";
 
         // Classes that start the system when they are in a scene or prefab, with the name shown to the user.
         private static readonly (string FullName, string Label)[] Bootstraps =
@@ -71,6 +76,50 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         }
 
         // ---- scanning ---------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// What is on disk plus what is in the scenes open right now. A bootstrap added to an open scene counts
+        /// immediately, before the scene is saved. Cheap enough to call from a hierarchy change.
+        /// </summary>
+        public static Report Combine(Report onDisk)
+        {
+            var report = new Report();
+            if (onDisk != null) report.StartedBy.AddRange(onDisk.StartedBy);
+
+            for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                if (!scene.IsValid() || !scene.isLoaded) continue;
+
+                bool unsaved = scene.isDirty || string.IsNullOrEmpty(scene.path);
+                string file = string.IsNullOrEmpty(scene.path) ? "an untitled scene" : Path.GetFileName(scene.path);
+                foreach (string label in BootstrapsInScene(scene))
+                {
+                    string entry = label + " in " + file;
+                    if (report.StartedBy.Contains(entry)) continue; // already saved on disk
+                    report.StartedBy.Add(unsaved ? entry + UnsavedSuffix : entry);
+                }
+            }
+
+            report.StartedBy.Sort(StringComparer.Ordinal);
+            return report;
+        }
+
+        private static HashSet<string> BootstrapsInScene(UnityEngine.SceneManagement.Scene scene)
+        {
+            var found = new HashSet<string>();
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                foreach (var behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (behaviour == null) continue; // a script that is missing
+                    string typeName = behaviour.GetType().FullName;
+                    foreach ((string fullName, string label) in Bootstraps)
+                        if (typeName == fullName) found.Add(label);
+                }
+            }
+            return found;
+        }
 
         /// <summary>Reads every scene, prefab and runtime script under Assets once. Small projects take well under a second.</summary>
         public static Report Scan()
