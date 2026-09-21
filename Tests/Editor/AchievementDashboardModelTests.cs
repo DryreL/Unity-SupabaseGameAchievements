@@ -202,6 +202,144 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             }
         }
 
+        // ---- localization ----------------------------------------------------------------------------------
+
+        private static DashboardAchievement Named(string key, string title, string description) =>
+            new DashboardAchievement { Key = key, Title = title, Description = description, BitIndex = 0 };
+
+        [Test]
+        public void The_localization_plan_defaults_to_key_title_and_key_description_in_the_default_table()
+        {
+            var data = Connected();
+            data.Achievements.Add(Named("clicked_on_a_link", "Clicked a link", "You clicked a link."));
+
+            var plan = data.BuildLocalizationPlan();
+
+            Assert.AreEqual(2, plan.Count);
+            Assert.AreEqual("ST_Achievements", plan[0].Table);
+            Assert.AreEqual("clicked_on_a_link_title", plan[0].Key);
+            Assert.AreEqual("Clicked a link", plan[0].Text);
+            Assert.AreEqual("clicked_on_a_link_description", plan[1].Key);
+            Assert.AreEqual("You clicked a link.", plan[1].Text);
+        }
+
+        [Test]
+        public void The_localization_plan_uses_overrides_where_present_and_defaults_elsewhere()
+        {
+            var data = Connected();
+            var a = Named("boss", "Boss", "Beat the boss.");
+            a.LocalizationTable = "ST_Bosses";
+            a.TitleKey = "custom_boss_title";
+            data.Achievements.Add(a);
+
+            var plan = data.BuildLocalizationPlan();
+
+            Assert.AreEqual("ST_Bosses", plan[0].Table);
+            Assert.AreEqual("custom_boss_title", plan[0].Key);
+            Assert.AreEqual("ST_Bosses", plan[1].Table);
+            Assert.AreEqual("boss_description", plan[1].Key, "only the overridden key changes");
+        }
+
+        [Test]
+        public void The_localization_plan_lists_a_table_and_key_once()
+        {
+            var data = Connected();
+            data.Achievements.Add(Named("a", "First", "d"));
+            var b = Named("b", "Second", "d");
+            b.BitIndex = 1;
+            b.TitleKey = "a_title";
+            data.Achievements.Add(b);
+
+            var plan = data.BuildLocalizationPlan();
+
+            Assert.AreEqual(1, plan.Count(p => p.Key == "a_title"));
+            Assert.AreEqual("First", plan.First(p => p.Key == "a_title").Text, "the first achievement to claim a key wins");
+        }
+
+        [Test]
+        public void Applying_localization_defaults_fills_only_empty_fields()
+        {
+            var data = Connected();
+            var plain = Named("plain", "P", "d");
+            var overridden = Named("over", "O", "d");
+            overridden.BitIndex = 1;
+            overridden.TitleKey = "my_title_key";
+            data.Achievements.AddRange(new[] { plain, overridden });
+
+            int changed = data.ApplyLocalizationDefaults();
+
+            Assert.AreEqual(2, changed);
+            Assert.AreEqual("ST_Achievements", plain.LocalizationTable);
+            Assert.AreEqual("plain_title", plain.TitleKey);
+            Assert.AreEqual("plain_description", plain.DescriptionKey);
+            Assert.AreEqual("my_title_key", overridden.TitleKey, "a hand-written key is an override");
+            Assert.AreEqual("over_description", overridden.DescriptionKey);
+            Assert.AreEqual(0, data.ApplyLocalizationDefaults(), "a second run changes nothing");
+        }
+
+        [Test]
+        public void Localizing_a_synced_achievement_makes_it_modified_so_it_gets_pushed()
+        {
+            var data = Connected();
+            var a = DashboardAchievement.FromRow(ServerRow(5, "synced", 0));
+            data.Achievements.Add(a);
+
+            data.ApplyLocalizationDefaults();
+
+            Assert.AreEqual(DashboardSyncState.Modified, a.State);
+            Assert.AreEqual("synced_title", a.BuildUpdatePayload().Value<string>("title_key"));
+        }
+
+        [Test]
+        public void An_auto_localization_key_follows_a_rename_but_an_override_does_not()
+        {
+            var data = Connected();
+            var auto = Named("old", "T", "d");
+            auto.LocalizationTable = "ST_Achievements";
+            auto.TitleKey = "old_title";
+            auto.DescriptionKey = "old_description";
+            var manual = Named("old2", "T", "d");
+            manual.BitIndex = 1;
+            manual.TitleKey = "hand_written";
+            data.Achievements.AddRange(new[] { auto, manual });
+
+            data.RenameKey(auto, "new");
+            data.RenameKey(manual, "new2");
+
+            Assert.AreEqual("new_title", auto.TitleKey);
+            Assert.AreEqual("new_description", auto.DescriptionKey);
+            Assert.AreEqual("hand_written", manual.TitleKey);
+        }
+
+        [Test]
+        public void Localization_setup_names_are_validated()
+        {
+            Assert.IsNull(DashboardValidator.ValidateLocalizationSetup("ST_Achievements", "Assets/Localization/Tables"));
+            Assert.IsNull(DashboardValidator.ValidateLocalizationSetup("ST_Achievements", "Assets\\Localization\\Tables\\"));
+            Assert.IsNotEmpty(DashboardValidator.ValidateLocalizationSetup("", "Assets/x"));
+            Assert.IsNotEmpty(DashboardValidator.ValidateLocalizationSetup("bad/name", "Assets/x"));
+            Assert.IsNotEmpty(DashboardValidator.ValidateLocalizationSetup("bad[name]", "Assets/x"));
+            Assert.IsNotEmpty(DashboardValidator.ValidateLocalizationSetup("ST", "Localization/Tables"), "must be inside Assets");
+            Assert.IsNotEmpty(DashboardValidator.ValidateLocalizationSetup("ST", "Assets/../Outside"));
+        }
+
+        [Test]
+        public void An_old_data_file_without_localization_settings_gets_the_defaults()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "dashboard-" + System.Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                File.WriteAllText(path, "{ \"FormatVersion\": 1, \"Achievements\": [] }");
+                var data = DashboardData.Load(path);
+                Assert.AreEqual("ST_Achievements", data.DefaultLocalizationTable);
+                Assert.AreEqual("Assets/Localization/Tables", data.LocalizationFolder);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
         // ---- persistence -----------------------------------------------------------------------------------
 
         [Test]

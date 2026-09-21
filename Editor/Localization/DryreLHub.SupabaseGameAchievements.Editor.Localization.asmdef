@@ -1,0 +1,28 @@
+{
+    "name": "DryreLHub.SupabaseGameAchievements.Editor.Localization",
+    "rootNamespace": "DryreLHub.SupabaseGameAchievements.Editor",
+    "references": [
+        "DryreLHub.SupabaseGameAchievements.Editor",
+        "Unity.Localization",
+        "Unity.Localization.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "ACHIEVEMENTS_UNITY_LOCALIZATION_EDITOR"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.localization",
+            "expression": "1.0.0",
+            "define": "ACHIEVEMENTS_UNITY_LOCALIZATION_EDITOR"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -197,6 +197,17 @@ Create a **String Table Collection** named `ST_Achievements` (Window → Asset M
 Localization Tables → New Table Collection) with entries such as `first_blood_title` and
 `first_blood_description`, and put `ST_Achievements` in the achievement rows' `localization_table`.
 
+The **Achievement Dashboard** does this for you: once your achievements are in, press **Localize** in its
+toolbar. If the string table `ST_Achievements` does not exist it is created (in
+`Assets/Localization/Tables/ST_Achievements/`, one table per project Locale), and every achievement gets a
+`<key>_title` and `<key>_description` entry holding its current title and description - e.g.
+`clicked_on_a_link` gets `clicked_on_a_link_title` and `clicked_on_a_link_description`. The card's
+*Localization (optional)* fields are the overrides: a table or key you typed there is used instead of the
+default, and the empty ones are filled in with the defaults so the database row and the manifest point at
+the entries (push afterwards, then regenerate the manifest). Existing entries are never overwritten, so
+running Localize again only adds what is missing. Needs the `com.unity.localization` package, at least one
+Locale and a Localization Settings asset; the table name and folder are under *Connection & files*.
+
 The asset's folder does **not** matter: tables are looked up by collection name through Localization
 Settings and Addressables, so `Assets/Localization/Tables/ST_Achievements/` (next to the game's other
 `ST_*` tables) is just a convention. What matters is the exact name (case-sensitive), that the

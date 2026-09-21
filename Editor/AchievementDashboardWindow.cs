@@ -263,6 +263,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                         PushItems(_data.Pending.ToList());
                 }
 
+                using (new EditorGUI.DisabledScope(_data.Achievements.Count == 0))
+                {
+                    if (GUILayout.Button(new GUIContent("Localize", "Create the string table (if missing) and one <key>_title / <key>_description entry per achievement, unless overridden."), EditorStyles.toolbarButton, GUILayout.Width(66)))
+                        CreateLocalizationTable();
+                }
+
                 using (new EditorGUI.DisabledScope(_data.GameId <= 0 || _data.Achievements.All(a => a.Id <= 0)))
                 {
                     if (GUILayout.Button(new GUIContent("Manifest", "Write the manifest JSON the game ships, from this dashboard."), EditorStyles.toolbarButton, GUILayout.Width(70)))
@@ -341,6 +347,17 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     _data.SetIconFolder(iconFolder);
                     MarkDirty();
                 }
+
+                EditorGUI.BeginChangeCheck();
+                _data.DefaultLocalizationTable = EditorGUILayout.TextField(
+                    new GUIContent("Localization Table", "Default string table for achievement text (also the collection the Localize button creates). Individual achievements can override it."),
+                    _data.DefaultLocalizationTable);
+                _data.LocalizationFolder = EditorGUILayout.TextField(
+                    new GUIContent("Localization Folder", "Where Localize creates the table's assets: <folder>/<table>/. Must be inside Assets."),
+                    _data.LocalizationFolder);
+                if (EditorGUI.EndChangeCheck()) MarkDirty();
+                if (!AchievementLocalizationBridge.IsAvailable)
+                    EditorGUILayout.LabelField("Unity Localization (com.unity.localization) is not installed: the Localize button is unavailable.", _styles.Mini);
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
@@ -547,9 +564,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Localization (optional)", _styles.Section);
-            a.LocalizationTable = EditorGUILayout.TextField(new GUIContent("Table", "Unity Localization string table, e.g. ST_Achievements."), a.LocalizationTable);
-            a.TitleKey = EditorGUILayout.TextField("Title Key", a.TitleKey);
-            a.DescriptionKey = EditorGUILayout.TextField("Description Key", a.DescriptionKey);
+            EditorGUILayout.LabelField("Leave empty to use the defaults shown in grey; the Localize button fills them in.", _styles.Mini);
+            a.LocalizationTable = HintTextField(new GUIContent("Table", "Unity Localization string table. Empty = the default table from Connection & files."),
+                a.LocalizationTable, _data.DefaultLocalizationTable);
+            a.TitleKey = HintTextField(new GUIContent("Title Key", "Entry key for the title. Empty = <key>_title."),
+                a.TitleKey, DashboardData.DefaultTitleKey(a.Key));
+            a.DescriptionKey = HintTextField(new GUIContent("Description Key", "Entry key for the description. Empty = <key>_description."),
+                a.DescriptionKey, DashboardData.DefaultDescriptionKey(a.Key));
 
             EditorGUIUtility.labelWidth = previousLabelWidth;
 
@@ -578,6 +599,19 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             if (string.IsNullOrWhiteSpace(_search)) return true;
             string needle = _search.Trim();
             return Contains(a.Key, needle) || Contains(a.Title, needle) || Contains(a.Description, needle);
+        }
+
+        /// <summary>A text field that shows a grey default while it is empty (an empty value means "use the default").</summary>
+        private string HintTextField(GUIContent label, string value, string hint)
+        {
+            Rect rect = EditorGUILayout.GetControlRect();
+            value = EditorGUI.TextField(rect, label, value);
+            if (string.IsNullOrEmpty(value) && Event.current.type == EventType.Repaint)
+            {
+                float offset = EditorGUIUtility.labelWidth + 4;
+                GUI.Label(new Rect(rect.x + offset, rect.y, Mathf.Max(0, rect.width - offset), rect.height), hint, _styles.Hint);
+            }
+            return value;
         }
 
         private static bool Contains(string haystack, string needle) =>
@@ -886,6 +920,60 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             });
         }
 
+        // =====================================================================================================
+        // Localization: string table + entries, and the matching achievement fields
+        // =====================================================================================================
+
+        private void CreateLocalizationTable()
+        {
+            if (!AchievementLocalizationBridge.IsAvailable)
+            {
+                Fail("Unity Localization is not installed in this project. Install the 'Localization' package (com.unity.localization) from the Package Manager, then try again.");
+                return;
+            }
+
+            string problem = DashboardValidator.ValidateLocalizationSetup(_data.DefaultLocalizationTable, _data.LocalizationFolder);
+            if (problem != null) { Fail(problem); return; }
+
+            var plan = _data.BuildLocalizationPlan();
+            if (plan.Count == 0) { Fail("Add an achievement with a key first."); return; }
+
+            var tables = plan.Select(p => p.Table).Distinct().ToList();
+            var invalidTable = tables.FirstOrDefault(t => DashboardValidator.ValidateLocalizationSetup(t, _data.LocalizationFolder) != null);
+            if (invalidTable != null) { Fail("An achievement uses the invalid table name '" + invalidTable + "'."); return; }
+
+            string folders = string.Join(", ", tables.Select(t => _data.LocalizationFolder.TrimEnd('/', '\\') + "/" + t));
+            if (!EditorUtility.DisplayDialog("Create localization table",
+                    "This adds " + plan.Count + " entr" + (plan.Count == 1 ? "y" : "ies") + " to " + string.Join(", ", tables) +
+                    " (creating the table in " + folders + " if it does not exist) and fills the empty Table / Title Key / Description Key fields of your achievements.\n\n" +
+                    "Existing entries are never overwritten.",
+                    "Create", "Cancel")) return;
+
+            LocalizationSyncResult result;
+            try
+            {
+                result = AchievementLocalizationBridge.Sync(_data.LocalizationFolder, plan);
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+                Fail("Could not update the string table: " + e.Message);
+                return;
+            }
+
+            if (!result.Ok) { Fail(result.Message); return; }
+
+            int updated = _data.ApplyLocalizationDefaults();
+            MarkDirty();
+
+            var message = new StringBuilder();
+            if (result.TablesCreated > 0) message.Append("Created " + result.TablesCreated + " string table(s) with " + result.Locales + " locale(s). ");
+            message.Append(result.EntriesAdded + " entr" + (result.EntriesAdded == 1 ? "y" : "ies") + " added, " + result.EntriesKept + " already existed (left untouched). ");
+            message.Append("The new entries hold each achievement's current text in every locale: replace it with translations. ");
+            if (updated > 0) message.Append(updated + " achievement(s) now reference the table: push them to Supabase, then regenerate the manifest.");
+            SetStatus(message.ToString().TrimEnd(), MessageType.Info);
+        }
+
         private void GenerateManifest()
         {
             if (_data.GameId <= 0 || _data.CatalogVersion < 1) { Fail("Connect the game first so the manifest knows its game id and catalog version."); return; }
@@ -1059,6 +1147,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             public readonly GUIStyle TileLabel;
             public readonly GUIStyle CardTitle;
             public readonly GUIStyle Mini;
+            public readonly GUIStyle Hint;
             public readonly GUIStyle MiniDanger;
             public readonly GUIStyle Pill;
             public readonly GUIStyle Section;
@@ -1081,6 +1170,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 TileLabel = new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.MiddleCenter };
                 CardTitle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 12, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip };
                 Mini = new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip };
+                Hint = new GUIStyle(EditorStyles.label) { normal = { textColor = new Color(0.5f, 0.5f, 0.5f, 0.85f) }, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip };
                 MiniDanger = new GUIStyle(Mini) { normal = { textColor = Palette.Danger } };
                 Pill = new GUIStyle(EditorStyles.miniBoldLabel) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
                 Section = new GUIStyle(EditorStyles.miniBoldLabel) { fontSize = 10 };

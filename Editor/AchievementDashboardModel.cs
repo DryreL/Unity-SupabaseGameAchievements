@@ -147,6 +147,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         /// </summary>
         public const string DefaultIconFolder = "images";
 
+        /// <summary>Default Unity Localization string table (and asset folder name) for achievement text.</summary>
+        public const string DefaultLocalizationTableName = "ST_Achievements";
+
+        /// <summary>Folder the string table collections are created in (one subfolder per table).</summary>
+        public const string DefaultLocalizationFolder = "Assets/Localization/Tables";
+
         public int FormatVersion { get; set; } = CurrentFormatVersion;
         public string GameSlug { get; set; } = "";
         public string GameName { get; set; } = "";
@@ -161,6 +167,15 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         /// <summary>Folder that new achievements' <c>icon_path</c> is filled with (folder + "/" + key).</summary>
         public string IconFolder { get; set; } = DefaultIconFolder;
+
+        /// <summary>
+        /// String table used by every achievement that does not name its own table. Also the name of the
+        /// string table collection created by the Localize button.
+        /// </summary>
+        public string DefaultLocalizationTable { get; set; } = DefaultLocalizationTableName;
+
+        /// <summary>Asset folder the Localize button creates string table collections under.</summary>
+        public string LocalizationFolder { get; set; } = DefaultLocalizationFolder;
         public List<DashboardAchievement> Achievements { get; set; } = new List<DashboardAchievement>();
 
         public static DashboardData Load(string fullPath)
@@ -209,7 +224,73 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         {
             if (achievement.Key == newKey) return;
             if (achievement.IconPath == IconPathFor(achievement.Key)) achievement.IconPath = IconPathFor(newKey);
+            if (achievement.TitleKey == DefaultTitleKey(achievement.Key)) achievement.TitleKey = DefaultTitleKey(newKey);
+            if (achievement.DescriptionKey == DefaultDescriptionKey(achievement.Key)) achievement.DescriptionKey = DefaultDescriptionKey(newKey);
             achievement.Key = newKey;
+        }
+
+        // ---- localization ---------------------------------------------------------------------------------
+
+        public static string DefaultTitleKey(string key) => key + "_title";
+
+        public static string DefaultDescriptionKey(string key) => key + "_description";
+
+        /// <summary>The table an achievement's text lives in: its own override, else <see cref="DefaultLocalizationTable"/>.</summary>
+        public string EffectiveTable(DashboardAchievement a) =>
+            !string.IsNullOrWhiteSpace(a.LocalizationTable) ? a.LocalizationTable.Trim() : (DefaultLocalizationTable ?? "").Trim();
+
+        public static string EffectiveTitleKey(DashboardAchievement a) =>
+            !string.IsNullOrWhiteSpace(a.TitleKey) ? a.TitleKey.Trim() : DefaultTitleKey(a.Key);
+
+        public static string EffectiveDescriptionKey(DashboardAchievement a) =>
+            !string.IsNullOrWhiteSpace(a.DescriptionKey) ? a.DescriptionKey.Trim() : DefaultDescriptionKey(a.Key);
+
+        /// <summary>
+        /// Every (table, key, text) the string tables need: for each achievement its title and description
+        /// under the keys it overrides, or <c>key_title</c> / <c>key_description</c> when it does not. The
+        /// text is the achievement's current title/description, the source-language starting point for
+        /// translators. A (table, key) pair is listed once; the first achievement to claim it wins.
+        /// </summary>
+        public List<LocalizationEntryPlan> BuildLocalizationPlan()
+        {
+            var plan = new List<LocalizationEntryPlan>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            void Add(string table, string key, string text)
+            {
+                if (seen.Add(table + "\n" + key)) plan.Add(new LocalizationEntryPlan(table, key, text ?? ""));
+            }
+
+            foreach (var a in Achievements.Where(a => !string.IsNullOrEmpty(a.Key)).OrderBy(a => a.BitIndex))
+            {
+                string table = EffectiveTable(a);
+                Add(table, EffectiveTitleKey(a), a.Title);
+                Add(table, EffectiveDescriptionKey(a), a.Description);
+            }
+            return plan;
+        }
+
+        /// <summary>
+        /// Writes the effective table and keys into every achievement's empty localization fields, so the
+        /// database row (and the manifest) reference the entries the string table now holds. Fields that were
+        /// filled in by hand are overrides and stay as they are.
+        /// </summary>
+        /// <returns>How many achievements changed.</returns>
+        public int ApplyLocalizationDefaults()
+        {
+            int changed = 0;
+            foreach (var a in Achievements.Where(a => !string.IsNullOrEmpty(a.Key)))
+            {
+                string table = EffectiveTable(a);
+                string titleKey = EffectiveTitleKey(a);
+                string descriptionKey = EffectiveDescriptionKey(a);
+                bool touched = a.LocalizationTable != table || a.TitleKey != titleKey || a.DescriptionKey != descriptionKey;
+                a.LocalizationTable = table;
+                a.TitleKey = titleKey;
+                a.DescriptionKey = descriptionKey;
+                if (touched) changed++;
+            }
+            return changed;
         }
 
         /// <summary>
@@ -354,6 +435,22 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             if (string.IsNullOrEmpty(slug) || !SlugPattern.IsMatch(slug))
                 return "Game slug must be lowercase letters, digits and '-' (1-64 characters, no leading/trailing '-').";
             if (!string.IsNullOrEmpty(name) && name.Length > 200) return "Game name can be at most 200 characters.";
+            return null;
+        }
+
+        /// <summary>Checks the names the Localize button hands to Unity Localization; null when they are usable.</summary>
+        public static string ValidateLocalizationSetup(string table, string folder)
+        {
+            if (string.IsNullOrWhiteSpace(table)) return "Enter a default localization table name (e.g. ST_Achievements).";
+            if (table.Trim().Length > 200) return "The localization table name can be at most 200 characters.";
+            if (table.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || table.Contains("[") || table.Contains("]"))
+                return "The localization table name cannot contain invalid file name characters or [ ].";
+
+            string normalized = (folder ?? "").Trim().Replace('\\', '/').Trim('/');
+            if (normalized != "Assets" && !normalized.StartsWith("Assets/", StringComparison.Ordinal))
+                return "The localization folder must be inside the project's Assets folder (e.g. Assets/Localization/Tables).";
+            if (normalized.Split('/').Any(part => part == ".." || part == "." || part.Length == 0))
+                return "The localization folder must not contain empty, '.' or '..' segments.";
             return null;
         }
 
