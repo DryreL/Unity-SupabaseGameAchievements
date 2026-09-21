@@ -1,0 +1,32 @@
+{
+    "name": "DryreLHub.SupabaseGameAchievements.Unity.TextMeshPro",
+    "rootNamespace": "DryreLHub.SupabaseGameAchievements.Unity",
+    "references": [
+        "DryreLHub.SupabaseGameAchievements",
+        "DryreLHub.SupabaseGameAchievements.Unity",
+        "Unity.TextMeshPro",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "ACHIEVEMENTS_TEXTMESHPRO"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.textmeshpro",
+            "expression": "1.0.0",
+            "define": "ACHIEVEMENTS_TEXTMESHPRO"
+        },
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.0.0",
+            "define": "ACHIEVEMENTS_TEXTMESHPRO"
+        }
+    ],
+    "noEngineReferences": false
+}

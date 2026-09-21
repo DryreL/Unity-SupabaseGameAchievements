@@ -14,11 +14,36 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
     /// </summary>
     internal static class RoundedBoxSprite
     {
-        private static Sprite _cachedGradientBg;
+        private const int MaxCachedSprites = 8;
+        private static readonly Dictionary<string, Sprite> Cache = new Dictionary<string, Sprite>();
+
+        private static void DestroyObject(UnityEngine.Object obj)
+        {
+            if (obj == null) return;
+            if (Application.isPlaying) UnityEngine.Object.Destroy(obj); else UnityEngine.Object.DestroyImmediate(obj);
+        }
 
         public static Sprite GetOrCreateGradient(int width = 440, int height = 108, int radius = 14)
+            => GetOrCreateGradient(width, height, radius, new Color32(20, 18, 29, 255), new Color32(10, 9, 15, 255));
+
+        /// <summary>A rounded box fading diagonally from <paramref name="startColor"/> (top-left) to <paramref name="endColor"/> (bottom-right).</summary>
+        public static Sprite GetOrCreateGradient(int width, int height, int radius, Color32 startColor, Color32 endColor)
         {
-            if (_cachedGradientBg != null) return _cachedGradientBg;
+            string key = width + "x" + height + "r" + radius + "/" + startColor.r + "," + startColor.g + "," + startColor.b + "," + startColor.a +
+                         "/" + endColor.r + "," + endColor.g + "," + endColor.b + "," + endColor.a;
+            if (Cache.TryGetValue(key, out var cached) && cached != null) return cached;
+
+            // Live-editing colors in Play Mode would otherwise leave one texture behind per tweak.
+            if (Cache.Count >= MaxCachedSprites)
+            {
+                foreach (var old in Cache.Values)
+                {
+                    if (old == null) continue;
+                    DestroyObject(old.texture);
+                    DestroyObject(old);
+                }
+                Cache.Clear();
+            }
 
             var texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
             {
@@ -28,11 +53,6 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             };
 
             var pixels = new Color32[width * height];
-
-            // Start color: top-left (#14121D -> RGB: 20, 18, 29, 255)
-            Color32 startColor = new Color32(20, 18, 29, 255);
-            // End color: bottom-right (darker shade -> RGB: 10, 9, 15, 255)
-            Color32 endColor = new Color32(10, 9, 15, 255);
 
             float boxHalfW = width * 0.5f;
             float boxHalfH = height * 0.5f;
@@ -56,6 +76,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                     byte r = (byte)Mathf.RoundToInt(Mathf.Lerp(startColor.r, endColor.r, diagT));
                     byte g = (byte)Mathf.RoundToInt(Mathf.Lerp(startColor.g, endColor.g, diagT));
                     byte b = (byte)Mathf.RoundToInt(Mathf.Lerp(startColor.b, endColor.b, diagT));
+                    float fillAlpha = Mathf.Lerp(startColor.a, endColor.a, diagT) / 255f;
 
                     // Signed distance field for rounded corner mask
                     float px = Mathf.Abs((x + 0.5f) - boxHalfW) - innerW;
@@ -64,18 +85,19 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                     float signedDist = dist - radius;
 
                     float alpha = Mathf.Clamp01(0.5f - signedDist);
-                    byte a = (byte)Mathf.RoundToInt(alpha * 255f);
+                    byte a = (byte)Mathf.RoundToInt(alpha * fillAlpha * 255f);
 
                     pixels[y * width + x] = new Color32(r, g, b, a);
                 }
             }
 
+            texture.hideFlags = HideFlags.DontSave; // an Editor preview must not leave these in a scene
             texture.SetPixels32(pixels);
             texture.Apply(false, true);
 
             var sprite = Sprite.Create(texture, new Rect(0, 0, width, height), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect);
             sprite.name = "AchievementToastGradientBg";
-            _cachedGradientBg = sprite;
+            Cache[key] = sprite;
             return sprite;
         }
     }
@@ -96,6 +118,10 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [SerializeField] private Text _description;
 
         private Vector2 _restingPosition;
+        private Vector2 _margin;
+        private AchievementToastCorner _corner = AchievementToastCorner.BottomRight;
+        private AchievementToastAnimation _animation = AchievementToastAnimation.Slide;
+        private float _scale = 1f;
         private bool _iconRectCaptured;
         private AchievementIconLayout.RectSpec _combinedIconRect;
 
@@ -111,9 +137,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             }
         }
 
-        public string TitleText => _title != null ? _title.text : null;
+        public virtual string TitleText => _title != null ? _title.text : null;
 
-        public string DescriptionText => _description != null ? _description.text : null;
+        public virtual string DescriptionText => _description != null ? _description.text : null;
 
         public bool HasIcon => _icon != null && _icon.enabled;
 
@@ -183,29 +209,120 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             _icon.enabled = icon != null;
         }
 
+        public AchievementToastCorner Corner => _corner;
+
+        public AchievementToastAnimation Animation => _animation;
+
+        /// <summary>The panel the overlay moves and fades (the Panel field). Null when the view has none.</summary>
+        public RectTransform Panel => _panel;
+
         public virtual void SetVisibility(float visibility)
         {
+            visibility = Mathf.Clamp01(visibility);
             if (_canvasGroup != null) _canvasGroup.alpha = visibility;
-            if (_panel != null)
+            if (_panel == null) return;
+
+            Vector2 position = _restingPosition;
+            float scale = _scale;
+            switch (_animation)
             {
-                float hiddenDrop = _panel.rect.height + 24f;
-                _panel.anchoredPosition = _restingPosition + new Vector2(0f, -(1f - visibility) * hiddenDrop);
+                case AchievementToastAnimation.Slide:
+                    // Leaves through the edge the toast sits against: down for the bottom corners, up for the top ones.
+                    float hiddenDrop = _panel.rect.height * _scale + 24f;
+                    position += new Vector2(0f, SlideSign(_corner) * (1f - visibility) * hiddenDrop);
+                    break;
+                case AchievementToastAnimation.Pop:
+                    scale = _scale * Mathf.Lerp(0.8f, 1f, visibility);
+                    break;
             }
+
+            _panel.anchoredPosition = position;
+            _panel.localScale = new Vector3(scale, scale, 1f);
         }
 
         public virtual void SetMargin(Vector2 margin)
         {
-            _restingPosition = new Vector2(-margin.x, margin.y);
+            _margin = margin;
+            ApplyResting();
+        }
+
+        /// <summary>
+        /// Anchors the panel to a screen corner (or the middle of the top/bottom edge) and picks the slide direction.
+        /// The panel's own anchors and pivot are replaced: its size and children stay as designed.
+        /// </summary>
+        public virtual void SetCorner(AchievementToastCorner corner)
+        {
+            _corner = corner;
+            if (_panel != null)
+            {
+                Vector2 anchor = CornerAnchor(corner);
+                _panel.anchorMin = anchor;
+                _panel.anchorMax = anchor;
+                _panel.pivot = anchor;
+            }
+            ApplyResting();
+        }
+
+        public virtual void SetAnimation(AchievementToastAnimation animation)
+        {
+            _animation = animation;
+        }
+
+        /// <summary>Uniform size multiplier for the whole panel.</summary>
+        public virtual void SetScale(float scale)
+        {
+            _scale = Mathf.Max(0.01f, scale);
+            if (_panel != null) _panel.localScale = new Vector3(_scale, _scale, 1f);
+        }
+
+        private void ApplyResting()
+        {
+            // Margins always push the toast inwards from its edge, whichever corner it sits in.
+            float x = CornerAnchor(_corner).x;
+            float xSign = x > 0.75f ? -1f : x < 0.25f ? 1f : 0f;
+            _restingPosition = new Vector2(xSign * _margin.x, -SlideSign(_corner) * _margin.y);
             if (_panel != null) _panel.anchoredPosition = _restingPosition;
+        }
+
+        /// <summary>-1 for the bottom edge (slides down to hide), +1 for the top edge (slides up).</summary>
+        internal static float SlideSign(AchievementToastCorner corner) =>
+            corner == AchievementToastCorner.TopLeft || corner == AchievementToastCorner.TopRight || corner == AchievementToastCorner.TopCenter ? 1f : -1f;
+
+        internal static Vector2 CornerAnchor(AchievementToastCorner corner)
+        {
+            switch (corner)
+            {
+                case AchievementToastCorner.BottomLeft: return new Vector2(0f, 0f);
+                case AchievementToastCorner.TopRight: return new Vector2(1f, 1f);
+                case AchievementToastCorner.TopLeft: return new Vector2(0f, 1f);
+                case AchievementToastCorner.BottomCenter: return new Vector2(0.5f, 0f);
+                case AchievementToastCorner.TopCenter: return new Vector2(0.5f, 1f);
+                default: return new Vector2(1f, 0f);
+            }
         }
 
         public static AchievementToastView CreateDefault(Transform parent, int sortingOrder, Font customFont = null, Color? accentColor = null, int cornerRadius = 14, int headerFontSize = 16, int titleFontSize = 24, int descriptionFontSize = 18)
         {
+            var settings = AchievementOverlaySettings.CreateDefault();
+            settings.sortingOrder = sortingOrder;
+            settings.cornerRadius = cornerRadius;
+            settings.headerFontSize = headerFontSize;
+            settings.titleFontSize = titleFontSize;
+            settings.descriptionFontSize = descriptionFontSize;
+            if (accentColor.HasValue) settings.headerColor = AchievementOverlaySettings.ToHex(accentColor.Value);
+            return CreateDefault(parent, settings, customFont);
+        }
+
+        /// <summary>Builds the built-in toast in code, styled by <paramref name="settings"/> (colors, fonts, radius, shadow, placement, motion).</summary>
+        public static AchievementToastView CreateDefault(Transform parent, AchievementOverlaySettings settings, Font customFont = null)
+        {
+            settings = (settings ?? AchievementOverlaySettings.CreateDefault()).Clone().Sanitize();
+
             var root = new GameObject("AchievementToast", typeof(RectTransform));
             root.transform.SetParent(parent, false);
             var canvas = root.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = sortingOrder;
+            canvas.sortingOrder = settings.sortingOrder;
             var scaler = root.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920, 1080);
@@ -236,24 +353,27 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
             view._panel = CreateRect("Panel", root.transform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(1, 0), new Vector2(440, 108));
             var background = view._panel.gameObject.AddComponent<Image>();
-            // Procedural gradient: starts at #14121D at top-left and smoothly darkens toward bottom-right, 100% opacity
-            background.sprite = RoundedBoxSprite.GetOrCreateGradient(440, 108, cornerRadius);
+            // Procedural gradient from the first background color (top-left) to the second (bottom-right).
+            background.sprite = RoundedBoxSprite.GetOrCreateGradient(440, 108, settings.cornerRadius, settings.BackgroundColor, settings.BackgroundColor2);
             background.type = Image.Type.Simple;
             background.color = Color.white;
             background.raycastTarget = false;
-            var shadow = view._panel.gameObject.AddComponent<Shadow>();
-            shadow.effectColor = new Color(0f, 0f, 0f, 0.72f);
-            shadow.effectDistance = new Vector2(0f, -8f);
-            shadow.useGraphicAlpha = true;
+            if (settings.shadowEnabled)
+            {
+                var shadow = view._panel.gameObject.AddComponent<Shadow>();
+                shadow.effectColor = settings.ShadowColor;
+                shadow.effectDistance = new Vector2(0f, -settings.shadowDistance);
+                shadow.useGraphicAlpha = true;
+            }
             view._canvasGroup = view._panel.gameObject.AddComponent<CanvasGroup>();
             view._canvasGroup.interactable = false;
             view._canvasGroup.blocksRaycasts = false;
 
-            Color effectiveAccentColor = accentColor ?? Color.white;
+            Color headerColor = settings.HeaderColor;
 
             var accent = CreateRect("Accent", view._panel, new Vector2(1, 0), new Vector2(1, 1), new Vector2(1, 0.5f), Vector2.zero);
             var accentImage = accent.gameObject.AddComponent<Image>();
-            accentImage.color = effectiveAccentColor;
+            accentImage.color = headerColor;
             accentImage.raycastTarget = false;
             accent.gameObject.SetActive(false);
             view._accent = accent;
@@ -264,14 +384,17 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             view._icon.preserveAspect = true;
             view._icon.raycastTarget = false;
 
-            int safeHeaderFontSize = Mathf.Max(1, headerFontSize);
-            int safeTitleFontSize = Mathf.Max(1, titleFontSize);
-            int safeDescriptionFontSize = Mathf.Max(1, descriptionFontSize);
-            view._header = CreateText("Header", view._panel, font, safeHeaderFontSize, Mathf.Max(1, safeHeaderFontSize - 3), FontStyle.Bold, effectiveAccentColor, 108, 10, 316, 20);
-            view._title = CreateText("Title", view._panel, font, safeTitleFontSize, Mathf.Max(1, safeTitleFontSize - 6), FontStyle.Bold, Color.white, 108, 30, 316, 32);
-            view._description = CreateText("Description", view._panel, font, safeDescriptionFontSize, Mathf.Max(1, safeDescriptionFontSize - 4), FontStyle.Normal, new Color(0.82f, 0.82f, 0.88f), 108, 64, 316, 36);
+            int safeHeaderFontSize = Mathf.Max(1, settings.headerFontSize);
+            int safeTitleFontSize = Mathf.Max(1, settings.titleFontSize);
+            int safeDescriptionFontSize = Mathf.Max(1, settings.descriptionFontSize);
+            view._header = CreateText("Header", view._panel, font, safeHeaderFontSize, Mathf.Max(1, safeHeaderFontSize - 3), FontStyle.Bold, headerColor, 108, 10, 316, 20);
+            view._title = CreateText("Title", view._panel, font, safeTitleFontSize, Mathf.Max(1, safeTitleFontSize - 6), FontStyle.Bold, settings.TitleColor, 108, 30, 316, 32);
+            view._description = CreateText("Description", view._panel, font, safeDescriptionFontSize, Mathf.Max(1, safeDescriptionFontSize - 4), FontStyle.Normal, settings.DescriptionColor, 108, 64, 316, 36);
 
-            view.SetMargin(Vector2.zero);
+            view.SetCorner(settings.corner);
+            view.SetAnimation(settings.animation);
+            view.SetScale(settings.scale);
+            view.SetMargin(new Vector2(settings.marginX, settings.marginY));
             view.SetVisibility(0f);
             return view;
         }
@@ -352,6 +475,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [SerializeField] private float _holdDuration = 4.5f;
         [SerializeField] private float _exitDuration = 0.5f;
         [SerializeField] private float _localizationGrace = 0.2f;
+        [Tooltip("Pause between one toast leaving and the next one appearing.")]
+        [SerializeField] private float _gapDuration;
 
         [Header("Audio")]
         [SerializeField] private AudioClip _unlockSound;
@@ -361,6 +486,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private IAchievementIconProvider _icons;
         private IAchievementLocalizationProvider _localization;
         private AchievementToastView _view;
+        private AchievementOverlaySettings _applied;
+        private bool _headerTextIsCustom;
+        private float _cooldown;
         private AchievementIconStyle _iconStyle = AchievementIconStyle.Combined;
         private Sprite _iconBackground;
         private float _iconInset = AchievementCatalog.DefaultIconInset;
@@ -460,6 +588,69 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             set => _unlockSound = value;
         }
 
+        /// <summary>The settings last given to <see cref="ApplySettings"/>, or null while the Inspector values are in use.</summary>
+        public AchievementOverlaySettings AppliedSettings => _applied;
+
+        /// <summary>
+        /// Restyles the toast from data (the dashboard's overlay.json): colors, fonts, placement, motion, timing, sound
+        /// and an optional custom prefab. The toast currently on screen is dropped and rebuilt on the next unlock, so
+        /// it is safe to call again whenever a setting changes, also while the game runs.
+        /// </summary>
+        public void ApplySettings(AchievementOverlaySettings settings)
+        {
+            if (settings == null) throw new ArgumentNullException(nameof(settings));
+            var s = settings.Clone().Sanitize();
+            _applied = s;
+
+            _headerText = s.headerText;
+            _headerTextIsCustom = !string.IsNullOrEmpty(s.headerText);
+            _headerLocalizationTable = s.headerLocalizationTable;
+            _headerLocalizationKey = s.headerLocalizationKey;
+            _margin = new Vector2(s.marginX, s.marginY);
+            _sortingOrder = s.sortingOrder;
+            _accentColor = s.HeaderColor;
+            _headerFontSize = s.headerFontSize;
+            _titleFontSize = s.titleFontSize;
+            _descriptionFontSize = s.descriptionFontSize;
+            _cornerRadius = s.cornerRadius;
+            SetTimings(s.enterDuration, s.holdDuration, s.exitDuration, s.localizationGrace);
+            _gapDuration = s.gapDuration;
+            _volume = s.volume;
+
+            _customFont = LoadResource<Font>(s.fontResource, "font");
+            _unlockSound = LoadResource<AudioClip>(s.soundResource, "sound");
+            _toastPrefab = null;
+            if (s.UsesCustomPrefab)
+            {
+                _toastPrefab = LoadResource<AchievementToastView>(s.toastPrefabResource, "toast prefab");
+                if (_toastPrefab == null && Resources.Load<GameObject>(s.toastPrefabResource) != null)
+                    Debug.LogWarning("[Achievements] The toast prefab '" + s.toastPrefabResource + "' has no AchievementToastView on its root object; using the built-in toast.", this);
+            }
+
+            DropView();
+        }
+
+        private T LoadResource<T>(string path, string what) where T : UnityEngine.Object
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            var asset = Resources.Load<T>(path);
+            if (asset == null)
+                Debug.LogWarning("[Achievements] The overlay " + what + " 'Resources/" + path + "' was not found; using the default. Check the path in the dashboard's Overlay tab.", this);
+            return asset;
+        }
+
+        private void DropView()
+        {
+            if (_view != null)
+            {
+                if (Application.isPlaying) Destroy(_view.gameObject); else DestroyImmediate(_view.gameObject);
+                _view = null;
+            }
+            _current = null;
+            _pendingIconTask = null;
+            SetPhase(Phase.Idle);
+        }
+
         public void Bind(AchievementNotificationService service, IAchievementIconProvider icons)
         {
             Bind(service, icons, null);
@@ -480,6 +671,11 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             switch (_phase)
             {
                 case Phase.Idle:
+                    if (_cooldown > 0f)
+                    {
+                        _cooldown -= dt;
+                        break;
+                    }
                     TryStartNext();
                     break;
                 case Phase.WaitingForText:
@@ -565,6 +761,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             _view.SetVisibility(0f);
             _view.gameObject.SetActive(false);
             _current = null;
+            _cooldown = _gapDuration;
             SetPhase(Phase.Idle);
         }
 
@@ -594,17 +791,34 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private void EnsureView()
         {
             if (_view != null) return;
+            var look = _applied ?? SettingsFromFields();
             if (_toastPrefab != null)
             {
                 _view = Instantiate(_toastPrefab, transform);
             }
             else
             {
-                _view = AchievementToastView.CreateDefault(transform, _sortingOrder, _customFont, _accentColor, _cornerRadius, _headerFontSize, _titleFontSize, _descriptionFontSize);
+                _view = AchievementToastView.CreateDefault(transform, look, _customFont);
             }
+            _view.SetCorner(look.corner);
+            _view.SetAnimation(look.animation);
+            _view.SetScale(look.scale);
             _view.SetMargin(_margin);
             _view.ApplyIconStyle(_iconStyle, _iconBackground, _iconInset);
             _view.gameObject.SetActive(false);
+        }
+
+        // What the Inspector fields describe, for when no settings file was applied.
+        private AchievementOverlaySettings SettingsFromFields()
+        {
+            var look = AchievementOverlaySettings.CreateDefault();
+            look.sortingOrder = _sortingOrder;
+            look.headerColor = AchievementOverlaySettings.ToHex(_accentColor);
+            look.headerFontSize = _headerFontSize;
+            look.titleFontSize = _titleFontSize;
+            look.descriptionFontSize = _descriptionFontSize;
+            look.cornerRadius = _cornerRadius;
+            return look.Sanitize();
         }
 
         private void SetPhase(Phase phase)
@@ -641,6 +855,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 string text = TryLookupLocalizedString(_headerLocalizationTable, _headerLocalizationKey);
                 if (IsValidTranslation(text)) return text;
             }
+
+            // Text typed into the dashboard beats the built-in per-language defaults below.
+            if (_headerTextIsCustom && !string.IsNullOrEmpty(_headerText)) return _headerText;
 
             // 2. Strict fallback based on OYUN DİLİ (Game Language)
             string gameLanguage = GetGameLanguageCode();

@@ -39,6 +39,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         [Header("Notifications")]
         [SerializeField] private bool _enableOverlay = true;
         [SerializeField] private UnityAchievementOverlay _overlay;
+        [Tooltip("Toast look authored in the Achievement Dashboard's Overlay tab (overlay.json). Empty = load Resources/<Overlay Resource>; if neither exists the Overlay component's own values are used.")]
+        [SerializeField] private TextAsset _overlayJson;
+        [SerializeField] private string _overlayResource = AchievementOverlaySettings.DefaultResource;
         [Tooltip("Folder (under the OS per-user config directory) containing the launcher's shared settings file. Empty = always enabled.")]
         [SerializeField] private string _sharedSettingsFolder = "";
         [SerializeField] private string _sharedSettingsFileName = "shared-settings.json";
@@ -74,6 +77,9 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
         public UnityAchievementOverlay Overlay => _overlay;
 
+        /// <summary>True when an overlay.json from the dashboard was found and applied to the toast.</summary>
+        public bool OverlaySettingsApplied { get; private set; }
+
         /// <summary>Shared transport, for auth providers that need to call the backend too.</summary>
         public static readonly UnityWebRequestTransport Transport = new UnityWebRequestTransport();
 
@@ -94,6 +100,8 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             public string IconBackgroundResource = "";
             public TextAsset RulesJson;
             public string RulesResource = "Achievements/rules";
+            public TextAsset OverlayJson;
+            public string OverlayResource = AchievementOverlaySettings.DefaultResource;
             public AudioClip UnlockSound;
             public float ToastHoldDuration = 4.5f;
             public bool VerboseLogging;
@@ -126,11 +134,14 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             host._iconBackgroundResource = config.IconBackgroundResource;
             host._rulesJson = config.RulesJson;
             host._rulesResource = config.RulesResource;
+            host._overlayJson = config.OverlayJson;
+            host._overlayResource = config.OverlayResource;
             host._verboseLogging = config.VerboseLogging;
             go.SetActive(true);
 
             host.Initialize(auth, localization);
-            if (host._overlay != null)
+            // A dashboard overlay.json is the whole look, so it wins over these two code-side defaults.
+            if (host._overlay != null && !host.OverlaySettingsApplied)
             {
                 if (config.UnlockSound != null) host._overlay.UnlockSound = config.UnlockSound;
                 if (config.ToastHoldDuration > 0f) host._overlay.HoldDuration = config.ToastHoldDuration;
@@ -311,6 +322,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                     if (_overlay == null) _overlay = gameObject.AddComponent<UnityAchievementOverlay>();
                     _overlay.Bind(_system.Notifications, new ResourcesAchievementIconProvider(_iconResourcesPrefix, _fallbackIcon), effectiveLocalization);
                     ApplyIconStyle(catalog);
+                    ApplyOverlaySettings();
                 }
 
                 EnsureRulesRunner();
@@ -321,6 +333,27 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             {
                 _logger.Error("Achievement system failed to start; gameplay continues without it. " + e);
             }
+        }
+
+        /// <summary>Applies the dashboard's overlay.json (colors, fonts, position, timing, sound, custom prefab) if there is one.</summary>
+        private void ApplyOverlaySettings()
+        {
+            string json = _overlayJson != null ? _overlayJson.text : null;
+            if (string.IsNullOrEmpty(json) && !string.IsNullOrEmpty(_overlayResource))
+            {
+                var asset = Resources.Load<TextAsset>(_overlayResource);
+                json = asset != null ? asset.text : null;
+            }
+            if (string.IsNullOrEmpty(json)) return;
+
+            if (!AchievementOverlaySettings.TryParse(json, out var settings))
+            {
+                _logger.Warning("The overlay settings file could not be read; the toast keeps its Inspector values. Fix or delete Resources/" + _overlayResource + ".json.");
+                return;
+            }
+
+            _overlay.ApplySettings(settings);
+            OverlaySettingsApplied = true;
         }
 
         /// <summary>Starts the rules the dashboard authored, once, if a rules.json exists. Missing file = no rules, no error.</summary>

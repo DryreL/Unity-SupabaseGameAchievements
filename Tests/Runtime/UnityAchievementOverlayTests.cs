@@ -257,6 +257,54 @@ namespace DryreLHub.SupabaseGameAchievements.Unity.Tests
             yield return WaitUntil(() => _overlay.View.TitleText == "Titel 2");
             Assert.AreEqual("Beschreibung 2", _overlay.View.DescriptionText);
         }
+
+        [UnityTest]
+        public IEnumerator Applied_settings_place_and_scale_the_built_in_toast()
+        {
+            Build();
+            var settings = AchievementOverlaySettings.CreateDefault();
+            settings.corner = AchievementToastCorner.TopLeft;
+            settings.scale = 2f;
+            settings.marginX = 30f;
+            settings.marginY = 40f;
+            settings.enterDuration = 0.05f;
+            settings.holdDuration = 1f;
+            settings.exitDuration = 0.05f;
+            settings.localizationGrace = 0.05f;
+            _overlay.ApplySettings(settings);
+
+            _system.TryUnlock("a0");
+            yield return WaitUntil(() => _overlay.ShownCount == 1);
+            var panel = _overlay.View.Panel;
+            yield return WaitUntil(() => Vector2.Distance(panel.anchoredPosition, new Vector2(30f, -40f)) < 0.01f);
+
+            Assert.AreEqual(new Vector2(0f, 1f), panel.anchorMin, "top-left corner");
+            Assert.AreEqual(new Vector2(0f, 1f), panel.pivot);
+            Assert.AreEqual(2f, panel.localScale.x, 0.001f);
+            Assert.AreEqual(1f, _overlay.HoldDuration, "timings come from the settings too");
+        }
+
+        [UnityTest]
+        public IEnumerator A_gap_delays_the_next_queued_toast()
+        {
+            Build();
+            var settings = AchievementOverlaySettings.CreateDefault();
+            settings.enterDuration = 0.05f;
+            settings.holdDuration = 0.1f;
+            settings.exitDuration = 0.05f;
+            settings.localizationGrace = 0.05f;
+            settings.gapDuration = 0.6f;
+            _overlay.ApplySettings(settings);
+
+            _system.TryUnlock("a0");
+            _system.TryUnlock("a1");
+            yield return WaitUntil(() => _overlay.ShownCount == 1);
+            float firstShown = Time.realtimeSinceStartup;
+            yield return WaitUntil(() => _overlay.ShownCount == 2, 5f);
+
+            // 0.2 s of toast plus the 0.6 s gap; a little slack for frame timing.
+            Assert.GreaterOrEqual(Time.realtimeSinceStartup - firstShown, 0.7f);
+        }
     }
 }
 

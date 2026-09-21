@@ -265,7 +265,9 @@ change and at startup) by `set_achievement_notifications_enabled` to:
 The overlay (`UnityAchievementOverlay`): bottom-right, 24 px margins, "ACHIEVEMENT UNLOCKED",
 icon, title, description; ease-in 0.25 s, visible until 2.5 s, fade/slide out by 3.0 s; FIFO queue
 (no overlap); one reused view; sound once per toast; unscaled time; no raycast blocking; waits up to
-0.2 s for localized text, then shows fallback text and swaps it in when ready.
+0.2 s for localized text, then shows fallback text and swaps it in when ready. Every value above (position, colors, fonts,
+timings, sound, animation, an optional custom prefab) can be changed from the dashboard's Overlay tab, which writes
+`Resources/Achievements/overlay.json` (`AchievementOverlaySettings`); the defaults reproduce this behaviour.
 
 ---
 

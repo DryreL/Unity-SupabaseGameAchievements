@@ -343,7 +343,31 @@ never overlaps a second toast (they queue), plays the unlock sound once per toas
 gameplay input (no `Graphic Raycaster`). Timings, margin, header text, sort order and the sound clip
 are all serialized fields on `UnityAchievementOverlay` if you want to tweak them without touching art.
 
+### Customizing the toast from the dashboard (no code)
+
+The dashboard's **Overlay** tab restyles the toast and shows a live preview (with a *Replay animation*
+button). It saves to `Assets/Resources/Achievements/overlay.json`, which `UnityAchievementManager` loads by
+itself, so there is nothing to add to a scene:
+
+- **Text**: the header line ("ACHIEVEMENT UNLOCKED" in the game's language by default) and its localization table/key.
+- **Colors**: the two background gradient colors (alpha works), header, title and description text, shadow, corner radius.
+- **Fonts**: a font asset and the three text sizes.
+- **Position and size**: any of six screen positions, margins, a size multiplier, sort order.
+- **Motion and timing**: slide / fade / pop, and how long it takes to appear, stay, disappear, the gap before the next
+  queued toast, and how long it waits for a translation.
+- **Sound**: the clip played when a toast appears, and its volume.
+
+Sound, font and prefab are stored as `Resources` paths; pick an asset outside a Resources folder and the dashboard
+offers to copy it into `Assets/Resources/Achievements/`. In Play Mode every change is applied to the running game as
+you make it, and *Show a test toast in the game* shows a real toast without unlocking anything. If `overlay.json` exists
+it wins over the Inspector values of `UnityAchievementOverlay` and over `Config.UnlockSound` / `Config.ToastHoldDuration`; delete it (or
+press *Reset to defaults*) to go back to the old behaviour. A file the dashboard cannot read is reported, never overwritten.
+
 ### Building your own visual (optional)
+
+The dashboard's **Overlay → Build your own toast (tutorial)** page walks through this step by step, can create a
+working starter prefab in one click, checks a prefab you made (Canvas, Graphic Raycaster, Panel, Canvas Group,
+texts, Resources folder), fixes what it can, and stores the prefab in `overlay.json`. The manual version follows.
 
 Only do this if you want different art/fonts (e.g. TextMeshPro) or a different animation. The overlay
 never cares how the toast looks — it only calls `SetContent`/`SetText`/`SetVisibility` on whatever
@@ -357,14 +381,15 @@ never cares how the toast looks — it only calls `SetContent`/`SetText`/`SetVis
 3. Add children for **Icon** (`Image`), **Title** and **Description** (`Text` or `TextMeshProUGUI`) —
    any layout you like.
 4. Add a script on the Canvas root that derives from `AchievementToastView`. Use the built-in one
-   as-is if your fields are plain `Text`/`Image`, or copy it and swap `Text` for `TextMeshProUGUI` and
-   override `SetContent`/`SetText`. **Do not override `SetVisibility`/`SetMargin`** unless you want a
+   as-is if your fields are plain `Text`/`Image`, or `AchievementToastViewTMP` (Add Component → *Achievement Toast
+   View (TextMeshPro)*, present whenever TextMeshPro is in the project) if you use TextMeshPro. **Do not override `SetVisibility`/`SetMargin`** unless you want a
    different animation — the base implementation already does the slide-up/slide-down described above,
    driven purely by your panel's own `RectTransform` height, so it adapts to whatever size you picked
    in step 2 automatically.
 5. Assign the child references in the Inspector (Panel, Canvas Group, Icon, Title, Description),
-   drag the whole Canvas into the project's `Assets` as a prefab, then assign that prefab to
-   `UnityAchievementOverlay`'s **Toast Prefab** field.
+   drag the whole Canvas into `Assets/Resources/Achievements/` as a prefab, then pick it on the dashboard's Overlay tab
+   (or assign it to `UnityAchievementOverlay`'s **Toast Prefab** field). The overlay sets the Panel's anchors and pivot from the
+   *Screen position* setting, so give the Panel a fixed size and do not stretch it.
 
 If you want a *different* animation (e.g. fade only, or scale in), override `SetVisibility(float)`
 yourself — `visibility` is driven every frame from 0 (hidden) to 1 (fully shown) and back, on
@@ -472,7 +497,7 @@ All under **Tools → DryreL Hub → Supabase Game Achievements**:
 
 | Menu item | What it does |
 |---|---|
-| Achievement Dashboard | The one place for everything: create and edit every `achievements` column (the **+** button adds one), autosaved in the project; Connect/Pull/Push with Supabase; write the manifest; import an `achievements.json` or generate an SQL restore script (*Import / SQL*); retire or permanently delete an achievement; localization tables; icon styles; the **Rules** tab (counters, quests, scene hookups); and a **Debug** tab for Play Mode. See below. |
+| Achievement Dashboard | The one place for everything: create and edit every `achievements` column (the **+** button adds one), autosaved in the project; Connect/Pull/Push with Supabase; write the manifest; import an `achievements.json` or generate an SQL restore script (*Import / SQL*); retire or permanently delete an achievement; localization tables; icon styles; the **Rules** tab (counters, quests, scene hookups); the **Overlay** tab (restyle the unlock toast or build your own); and a **Debug** tab for Play Mode. See below. |
 
 The Patreon sample adds one more once imported: **Setup Achievements (Patreon) In Scene** (see step 6).
 

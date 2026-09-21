@@ -129,6 +129,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             UnityEditor.SceneManagement.EditorSceneManager.sceneSaved -= OnSceneSavedOrOpened;
             UnityEditor.SceneManagement.EditorSceneManager.sceneOpened -= OnSceneOpened;
             if (_saveDue) SaveNow();
+            FlushOverlay();
             foreach (var texture in _ownedTextures)
                 if (texture != null) DestroyImmediate(texture);
             _ownedTextures.Clear();
@@ -136,11 +137,16 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             _iconLoading.Clear();
         }
 
-        private void OnFocus() => DropLocalIconCache();
+        private void OnFocus()
+        {
+            DropLocalIconCache();
+            _overlayLoaded = false; // the file may have changed outside (git pull, another editor)
+        }
 
         private void OnInspectorUpdate()
         {
             if (_saveDue && EditorApplication.timeSinceStartup >= _saveAt) SaveNow();
+            SaveOverlayIfDue();
             if (_tab == Tab.Rules && EditorApplication.timeSinceStartup >= _nextBindingScan) RefreshBindingScan();
             Repaint(); // keeps the "saved at" label and download previews fresh
         }
@@ -223,6 +229,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             if (_tab == Tab.Rules)
             {
                 DrawRulesTab();
+                return;
+            }
+            if (_tab == Tab.Overlay)
+            {
+                DrawOverlayTab();
                 return;
             }
             if (_tab == Tab.Debug)

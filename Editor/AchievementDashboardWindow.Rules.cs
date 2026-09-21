@@ -15,7 +15,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
     /// </summary>
     public sealed partial class AchievementDashboardWindow
     {
-        private enum Tab { Achievements, Rules, Debug }
+        private enum Tab { Achievements, Rules, Overlay, Debug }
 
         /// <summary>The "add hookups" form of one role of one rule, kept between repaints.</summary>
         private sealed class BindingDraft
@@ -88,7 +88,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.Space(8);
-                int selected = GUILayout.Toolbar((int)_tab, new[] { "Achievements", "Rules  (" + _data.Rules.Count + ")", "Debug" }, GUILayout.Height(24));
+                int selected = GUILayout.Toolbar((int)_tab, new[] { "Achievements", "Rules  (" + _data.Rules.Count + ")", "Overlay", "Debug" }, GUILayout.Height(24));
                 GUILayout.Space(8);
                 if (selected != (int)_tab)
                 {
