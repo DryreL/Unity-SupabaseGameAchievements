@@ -66,7 +66,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private static void Open()
         {
             var window = GetWindow<AchievementDashboardWindow>(false, "Achievement Dashboard");
-            window.minSize = new Vector2(620, 520);
+            window.minSize = new Vector2(700, 520);
             window.Show();
         }
 
@@ -172,6 +172,11 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 DrawRulesTab();
                 return;
             }
+            if (_tab == Tab.Debug)
+            {
+                DrawDebugTab();
+                return;
+            }
 
             using (new EditorGUI.DisabledScope(_isBusy))
             {
@@ -269,7 +274,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 }
 
                 int pending = _data.Pending.Count() + (_data.IsGameIconPending ? 1 : 0);
-                using (new EditorGUI.DisabledScope(pending == 0 || _data.GameId <= 0 || !CanTalkToSupabase(out _)))
+                using (new EditorGUI.DisabledScope(pending == 0 || _data.GameId <= 0 || !CanWrite(out _)))
                 {
                     if (GUILayout.Button(new GUIContent("Push " + (pending > 0 ? "(" + pending + ")" : ""), "Send every new or modified achievement, and a changed icon style, to Supabase."), EditorStyles.toolbarButton, GUILayout.Width(74)))
                         PushItems(_data.Pending.ToList(), true);
@@ -286,6 +291,10 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     if (GUILayout.Button(new GUIContent("Manifest", "Write the manifest JSON the game ships, from this dashboard."), EditorStyles.toolbarButton, GUILayout.Width(70)))
                         GenerateManifest();
                 }
+
+                if (EditorGUILayout.DropdownButton(new GUIContent("Import / SQL", "Import an achievements.json into the dashboard, or generate an SQL script that restores the catalog with its ids."),
+                        FocusType.Passive, EditorStyles.toolbarDropDown, GUILayout.Width(92)))
+                    ShowFileMenu(GUILayoutUtility.GetLastRect());
             }
         }
 
@@ -300,19 +309,25 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 _supabaseUrl = EditorGUILayout.TextField(new GUIContent("Supabase URL", "e.g. https://xxxx.supabase.co"), _supabaseUrl);
                 if (EditorGUI.EndChangeCheck()) EditorPrefs.SetString(PrefsPrefix + "SupabaseUrl", _supabaseUrl);
 
-                if (!_autoFillAttempted && string.IsNullOrEmpty(_supabaseUrl))
+                if (!_autoFillAttempted && (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_serviceKey)))
                 {
                     _autoFillAttempted = true;
-                    if (PatreonConfigReflection.TryGetSupabaseCredentials(out var url, out _))
+                    if (PatreonConfigReflection.TryGetSupabaseCredentials(out var url, out var publishableKey))
                     {
-                        _supabaseUrl = url;
-                        EditorPrefs.SetString(PrefsPrefix + "SupabaseUrl", _supabaseUrl);
+                        if (string.IsNullOrEmpty(_supabaseUrl))
+                        {
+                            _supabaseUrl = url;
+                            EditorPrefs.SetString(PrefsPrefix + "SupabaseUrl", _supabaseUrl);
+                        }
+                        if (string.IsNullOrEmpty(_serviceKey)) _serviceKey = publishableKey; // read-only until a service key replaces it
                     }
                 }
 
                 _serviceKey = EditorGUILayout.PasswordField(
-                    new GUIContent("Service Key", "A Supabase service_role/secret key. Required to read an inactive game and to write anything: clients have no write grants. Never saved to disk - re-enter it each session."),
+                    new GUIContent("API Key", "A service_role/secret key does everything (push, create a game, delete, read an inactive game). A publishable key (sb_publishable_...) can only read an active game: Connect, Pull and Manifest work, writing does not. Never saved to disk - re-enter it each session."),
                     _serviceKey);
+                if (IsReadOnlyKey)
+                    EditorGUILayout.LabelField("Read-only key: you can Connect, Pull and write the manifest. Enter a service/secret key to push, create a game or delete.", _styles.Mini);
 
                 EditorGUI.BeginChangeCheck();
                 using (new EditorGUI.DisabledScope(_data.GameId > 0))
@@ -328,7 +343,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     {
                         if (GUILayout.Button(_data.GameId > 0 ? "Reconnect & Pull" : "Connect & Pull", GUILayout.Width(140))) ConnectAndPull();
                     }
-                    using (new EditorGUI.DisabledScope(!ready || !_gameMissing))
+                    using (new EditorGUI.DisabledScope(!ready || !_gameMissing || IsReadOnlyKey))
                     {
                         if (GUILayout.Button(new GUIContent("Create Game", "Only enabled after a lookup found no game with this slug."), GUILayout.Width(110))) CreateGame();
                     }
@@ -424,6 +439,8 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             {
                 _scroll = scroll.scrollPosition;
 
+                DrawDeleteConfirmation();
+
                 if (_data.Achievements.Count == 0)
                 {
                     EditorGUILayout.Space(24);
@@ -503,7 +520,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             }
 
             right -= 54;
-            using (new EditorGUI.DisabledScope(a.State == DashboardSyncState.Synced || _data.GameId <= 0 || !CanTalkToSupabase(out _)))
+            using (new EditorGUI.DisabledScope(a.State == DashboardSyncState.Synced || _data.GameId <= 0 || !CanWrite(out _)))
             {
                 if (GUI.Button(new Rect(right, header.y + 8, 54, 22), new GUIContent("Push", "Send only this achievement to Supabase."), EditorStyles.miniButton))
                     PushItems(new List<DashboardAchievement> { a });
@@ -607,6 +624,8 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 a.DescriptionKey, DashboardData.DefaultDescriptionKey(a.Key));
 
             EditorGUIUtility.labelWidth = previousLabelWidth;
+
+            DrawDangerZone(a);
 
             if (errors.Count > 0)
             {
@@ -795,11 +814,22 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         // Supabase: connect, pull, push, manifest
         // =====================================================================================================
 
+        private bool IsReadOnlyKey => _serviceKey.StartsWith("sb_publishable_", StringComparison.Ordinal);
+
+        /// <summary>Enough to read: a URL and any key.</summary>
         private bool CanTalkToSupabase(out string problem)
         {
             problem = null;
             if (string.IsNullOrEmpty(_supabaseUrl)) problem = "Enter the Supabase URL.";
-            else if (string.IsNullOrEmpty(_serviceKey)) problem = "Enter a service/secret key (it is never saved to disk).";
+            else if (string.IsNullOrEmpty(_serviceKey)) problem = "Enter an API key (it is never saved to disk).";
+            return problem == null;
+        }
+
+        /// <summary>Needed to change anything: the key must not be a publishable (read-only) one.</summary>
+        private bool CanWrite(out string problem)
+        {
+            if (!CanTalkToSupabase(out problem)) return false;
+            if (IsReadOnlyKey) problem = "A publishable key can only read. Enter a service/secret key to push, create a game or delete.";
             return problem == null;
         }
 
@@ -896,6 +926,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
                 string message = "Pulled '" + _data.GameSlug + "' (catalog v" + _data.CatalogVersion + "): " +
                     result.Added + " added, " + result.Updated + " updated";
+                if (result.Linked > 0) message += ", " + result.Linked + " draft(s) linked to their Supabase rows";
                 if (result.LocalEditsKept > 0) message += ", " + result.LocalEditsKept + " kept with your unsent edits";
                 if (_gameIconEditsKept) message += "; your unsent icon style change was kept";
                 SetStatus(message + ".", MessageType.Info);
@@ -908,7 +939,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         {
             bool sendGame = includeGame && _data.IsGameIconPending;
             if (items.Count == 0 && !sendGame) return;
-            if (!CanTalkToSupabase(out string problem)) { Fail(problem); return; }
+            if (!CanWrite(out string problem)) { Fail(problem); return; }
             if (_data.GameId <= 0) { Fail("Connect the game first (Connection & files > Connect & Pull)."); return; }
 
             var invalid = items.Where(a => _errors.TryGetValue(a, out var list) && list.Count > 0).ToList();

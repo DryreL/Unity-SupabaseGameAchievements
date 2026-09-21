@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Linq;
 using DryreLHub.SupabaseGameAchievements.Editor;
@@ -200,6 +201,166 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             {
                 File.Delete(path);
             }
+        }
+
+        // ---- importing a manifest --------------------------------------------------------------------------
+
+        private static JObject Manifest(string game, params JObject[] entries) => new JObject
+        {
+            ["formatVersion"] = 1,
+            ["game"] = game,
+            ["gameId"] = 99,
+            ["catalogVersion"] = 42,
+            ["achievements"] = new JArray(entries),
+        };
+
+        private static JObject Entry(string key, int bit, string title = "T", long id = 500) => new JObject
+        {
+            ["id"] = id,
+            ["key"] = key,
+            ["bitIndex"] = bit,
+            ["title"] = title,
+            ["description"] = "d",
+        };
+
+        [Test]
+        public void Importing_a_manifest_adds_drafts_without_taking_its_ids()
+        {
+            var data = new DashboardData();
+
+            var result = data.ImportManifest(Manifest("kiva", Entry("first", 0, "First", id: 5), Entry("second", 1, id: 6)));
+
+            Assert.AreEqual(2, result.Added);
+            Assert.AreEqual("kiva", data.GameSlug, "an empty dashboard adopts the manifest's game");
+            Assert.IsTrue(data.Achievements.All(a => a.Id == 0), "the server assigns ids");
+            Assert.AreEqual(DashboardSyncState.New, data.Achievements[0].State);
+            Assert.AreEqual("First", data.Achievements[0].Title);
+        }
+
+        [Test]
+        public void Importing_updates_an_achievement_that_already_exists_by_key()
+        {
+            var data = Connected();
+            data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(10, "first", 0, "Old title")));
+
+            var result = data.ImportManifest(Manifest("test-game", Entry("first", 0, "New title")));
+
+            Assert.AreEqual(1, result.Updated);
+            Assert.AreEqual("New title", data.Achievements[0].Title);
+            Assert.AreEqual(10, data.Achievements[0].Id, "the server id stays");
+            Assert.AreEqual(DashboardSyncState.Modified, data.Achievements[0].State);
+        }
+
+        [Test]
+        public void Importing_the_same_manifest_twice_changes_nothing_the_second_time()
+        {
+            var data = new DashboardData();
+            var manifest = Manifest("kiva", Entry("first", 0));
+
+            data.ImportManifest(manifest);
+            var second = data.ImportManifest(manifest);
+
+            Assert.AreEqual(0, second.Added);
+            Assert.AreEqual(1, second.Unchanged);
+            Assert.AreEqual(1, data.Achievements.Count);
+        }
+
+        [Test]
+        public void Importing_never_moves_a_permanent_bit_index_or_reuses_a_taken_one()
+        {
+            var data = Connected();
+            data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(10, "pushed", 0)));
+            data.Achievements.Add(DashboardAchievement.FromRow(ServerRow(11, "other", 1)));
+
+            var result = data.ImportManifest(Manifest("test-game", Entry("pushed", 7), Entry("clash", 1)));
+
+            Assert.AreEqual(2, result.Skipped.Count);
+            Assert.AreEqual(0, data.Achievements[0].BitIndex);
+            Assert.AreEqual(2, data.Achievements.Count, "the clashing entry was not added");
+        }
+
+        [Test]
+        public void Importing_a_manifest_of_another_game_is_refused()
+        {
+            var data = Connected();
+
+            Assert.Throws<InvalidOperationException>(() => data.ImportManifest(Manifest("someone-else", Entry("a", 0))));
+            Assert.AreEqual(0, data.Achievements.Count);
+        }
+
+        [Test]
+        public void Importing_a_manifest_without_achievements_is_an_error()
+        {
+            Assert.Throws<InvalidOperationException>(() => new DashboardData().ImportManifest(new JObject { ["game"] = "g" }));
+        }
+
+        [Test]
+        public void Importing_carries_over_localization_flags_and_the_layered_icon_style()
+        {
+            var data = new DashboardData();
+            var entry = Entry("first", 0);
+            entry["hidden"] = true;
+            entry["retired"] = true;
+            entry["displayOrder"] = 3;
+            entry["icon"] = "images/first";
+            entry["localization"] = new JObject { ["table"] = "ST_A", ["titleKey"] = "t", ["descriptionKey"] = "d" };
+            var manifest = Manifest("kiva", entry);
+            manifest["iconStyle"] = "layered";
+            manifest["iconBackground"] = "images/bg";
+            manifest["iconInset"] = 0.3;
+
+            data.ImportManifest(manifest);
+
+            var a = data.Achievements[0];
+            Assert.IsTrue(a.Hidden);
+            Assert.IsTrue(a.Retired);
+            Assert.AreEqual(3, a.DisplayOrder);
+            Assert.AreEqual("images/first", a.IconPath);
+            Assert.AreEqual("ST_A", a.LocalizationTable);
+            Assert.AreEqual(AchievementIconStyle.Layered, data.IconStyle);
+            Assert.AreEqual("images/bg", data.IconBackground);
+            Assert.AreEqual(0.3f, data.IconInset, 0.0001f);
+        }
+
+        [Test]
+        public void Pulling_links_an_imported_draft_to_the_row_supabase_already_has()
+        {
+            var data = Connected();
+            data.ImportManifest(Manifest("test-game", Entry("first", 0, "Imported title")));
+
+            var result = data.MergeRemote(new JArray(ServerRow(10, "first", 0, "Server title")));
+
+            Assert.AreEqual(1, result.Linked);
+            Assert.AreEqual(0, result.Added);
+            Assert.AreEqual(1, data.Achievements.Count, "no duplicate");
+            Assert.AreEqual(10, data.Achievements[0].Id);
+            Assert.AreEqual("Imported title", data.Achievements[0].Title, "the draft's text wins until pushed");
+            Assert.AreEqual(DashboardSyncState.Modified, data.Achievements[0].State);
+        }
+
+        [Test]
+        public void A_linked_draft_identical_to_the_server_row_is_synced()
+        {
+            var data = Connected();
+            var entry = Entry("first", 0, "Title");
+            entry["description"] = "Description"; // the same text ServerRow uses
+            data.ImportManifest(Manifest("test-game", entry));
+
+            data.MergeRemote(new JArray(ServerRow(10, "first", 0, "Title")));
+
+            Assert.AreEqual(DashboardSyncState.Synced, data.Achievements[0].State);
+        }
+
+        [Test]
+        public void A_draft_with_the_same_key_but_another_bit_is_not_linked()
+        {
+            var data = Connected();
+            data.ImportManifest(Manifest("test-game", Entry("first", 5)));
+
+            var result = data.MergeRemote(new JArray(ServerRow(10, "first", 0)));
+
+            Assert.AreEqual(0, result.Linked, "the bit index is permanent, so these are different rows");
+            Assert.AreEqual(2, data.Achievements.Count);
         }
 
         // ---- rules -----------------------------------------------------------------------------------------

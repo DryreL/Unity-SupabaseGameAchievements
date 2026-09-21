@@ -73,12 +73,12 @@ Rules that keep old installs correct (the database enforces the first three):
 
 - `achievement_key`, `id` and `bit_index` never change.
 - New achievements take the **next unused** `bit_index`. Never reuse one, not even from a retired achievement.
-- Don't delete achievements. Retire them: `update achievements set is_retired = true where ...`, or use
-  **Tools → DryreL Hub → Supabase Game Achievements → Manage Achievements** (needs a Supabase
-  service/secret key - a publishable key cannot retire or delete, on purpose). That window can also
-  permanently delete an achievement, but only if it is already retired and no player has ever unlocked
-  it (the server enforces both, regardless of what the window sends) - that path exists for a mistake
-  that never shipped, not for real removals.
+- Don't delete achievements. Retire them: `update achievements set is_retired = true where ...`, or tick
+  **Retired** on the achievement in the **Achievement Dashboard** and push (needs a Supabase service/secret
+  key - a publishable key cannot retire or delete, on purpose). The dashboard can also permanently delete an
+  achievement (its *Danger zone*), but only if it is already retired and no player has ever unlocked it (the
+  server enforces both, regardless of what the dashboard sends) - that path exists for a mistake that never
+  shipped, not for real removals.
 - Keys: lowercase `a-z 0-9 _ . -`, up to 64 characters. Bit indexes: 0–4095.
 - Edits to titles/descriptions are fine; they bump `games.catalog_version` automatically.
 
@@ -123,12 +123,12 @@ fallback; Remote Config (if you use it) can only override it, never replace it.
 
 **3a. Bundled file (always do this one).** Two ways to produce it - same output either way:
 
-- **In the Unity Editor:** **Tools → DryreL Hub → Supabase Game Achievements → Export Achievement
-  Catalog**. Supabase URL/publishable key auto-fill from `Resources/PatreonConfig.asset` if present
-  (button to redo it manually otherwise); type the game slug and pick an output path (suggested:
-  `Assets/Resources/Achievements/achievements.json`, matching `PatreonAchievementsBootstrap`'s default
-  load path) and click Export. For an inactive (`is_active = false`) game, put a secret/service key in
-  the Export Key field for just that one export - it is never saved to disk.
+- **In the Unity Editor:** the **Achievement Dashboard**. Enter the game slug under *Connection & files*
+  (the Supabase URL and a read-only publishable key auto-fill from `Resources/PatreonConfig.asset` if
+  present), press **Connect & Pull**, then **Manifest**; it writes
+  `Assets/Resources/Achievements/achievements.json` (the path is editable, and matches
+  `PatreonAchievementsBootstrap`'s default load path). A publishable key is enough for a released game; for an
+  inactive (`is_active = false`) game use a secret/service key, which is never saved to disk.
 - **From a script/CI**, e.g. the launcher repo:
   ```bash
   node scripts/export-achievement-catalog.mjs my-game ../MyGame/Assets/Achievements/achievements.json
@@ -185,7 +185,7 @@ uses combined icons, so a missing file never blanks the toast.
 The style is stored in Supabase on the game row (`games.icon_style` = `combined` / `layered`,
 `icon_background`, `icon_inset`; migration `20260921000000_games_icon_style.sql`, apply it with
 `supabase db push`). The dashboard's **Push** sends a changed style (and **Pull** reads it), and every
-export - the dashboard's Manifest button, the *Export Achievement Catalog* window and
+export - the dashboard's Manifest button and
 `scripts/export-achievement-catalog.mjs` - writes the same manifest fields. Changing the style bumps
 `catalog_version` like any catalog change. Against a database that has not applied the migration everything
 keeps working as Combined.
@@ -383,8 +383,10 @@ plus *how* it unlocks, plus the places in your scenes that drive it:
 | **Flawless run (start / fail / complete)** | "finish the quest without dying": completing unlocks only if *fail* did not happen since *start* |
 
 1. **+ Add Rule**, pick the achievement and the rule type (a counter also gets its target).
-2. Under *Trigger* (or *Start / Fail / Complete*) **Add a hookup**: drag the object from the Hierarchy of an
-   **open scene** into *Scene object* (or press *Use selection*), pick the component, then either
+2. Under *Trigger* (or *Start / Fail / Complete*) **Add hookups**: add as many objects as you like from the
+   Hierarchy of an **open scene** (the *Add object* field, *Use selection* for everything you have selected, or
+   drop them on the drop area; several buttons can drive the same achievement), pick the component (chosen from
+   the first object, the others use their component of the same type), then either
    - **UnityEvent**: a Button's `onClick`, a Toggle, or any `UnityEvent` field of one of your own scripts
      (a public or `[SerializeField]` one), or
    - **Condition**: a `bool` method / property / field of your own script (`public bool BossDefeated => ...;`).
@@ -455,11 +457,7 @@ All under **Tools → DryreL Hub → Supabase Game Achievements**:
 
 | Menu item | What it does |
 |---|---|
-| Achievement Dashboard | Create and edit every `achievements` column in one window (the **+** button adds one), autosaved in the project, pushed to Supabase from the Editor, and turned into the manifest file. See below. |
-| Import Achievement Catalog | Parses an achievements.json manifest and imports it to Supabase via REST API (needs a service key) or generates an idempotent SQL script. |
-| Export Achievement Catalog | Pulls one game's catalog from Supabase and writes the manifest JSON (see step 3a). |
-| Manage Achievements | Retires or (with confirmation, only if already retired and never unlocked) permanently deletes an achievement. Needs a service/secret key. |
-| Achievement Debug Window | Play Mode only. Lists every achievement in the running game with an Unlock button, plus Sync Now / Reconcile From Server, with live pending/unlocked counts - a quick way to exercise `AchievementManager` without writing test code. |
+| Achievement Dashboard | The one place for everything: create and edit every `achievements` column (the **+** button adds one), autosaved in the project; Connect/Pull/Push with Supabase; write the manifest; import an `achievements.json` or generate an SQL restore script (*Import / SQL*); retire or permanently delete an achievement; localization tables; icon styles; the **Rules** tab (counters, quests, scene hookups); and a **Debug** tab for Play Mode. See below. |
 
 The Patreon sample adds one more once imported: **Setup Achievements (Patreon) In Scene** (see step 6).
 

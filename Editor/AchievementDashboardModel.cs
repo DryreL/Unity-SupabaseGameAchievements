@@ -377,6 +377,94 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             return new AchievementRuleSet(definitions);
         }
 
+        // ---- importing a manifest -----------------------------------------------------------------------------
+
+        /// <summary>
+        /// Merges an <c>achievements.json</c> into the dashboard by key: known achievements take the manifest's
+        /// editable fields, unknown ones are added as drafts. Server ids are ignored on purpose (the server
+        /// assigns them, and a later Pull links a draft to its existing row); a bit index is never changed once
+        /// an achievement exists on the server. Throws if the manifest belongs to another game.
+        /// </summary>
+        public ImportResult ImportManifest(JObject manifest)
+        {
+            if (manifest == null) throw new ArgumentNullException(nameof(manifest));
+            if (!(manifest["achievements"] is JArray items)) throw new InvalidOperationException("The manifest has no 'achievements' array.");
+
+            string slug = manifest.Value<string>("game");
+            if (!string.IsNullOrEmpty(GameSlug) && !string.IsNullOrEmpty(slug) && !string.Equals(GameSlug, slug, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("This manifest belongs to game '" + slug + "', but this dashboard is for '" + GameSlug + "'.");
+            if (string.IsNullOrEmpty(GameSlug) && !string.IsNullOrEmpty(slug)) GameSlug = slug;
+
+            if (string.Equals(manifest.Value<string>("iconStyle"), "layered", StringComparison.OrdinalIgnoreCase))
+            {
+                IconStyle = AchievementIconStyle.Layered;
+                string background = manifest.Value<string>("iconBackground");
+                if (!string.IsNullOrEmpty(background)) IconBackground = background;
+                double? inset = manifest.Value<double?>("iconInset");
+                if (inset.HasValue) IconInset = (float)inset.Value;
+            }
+
+            var result = new ImportResult();
+            foreach (var entry in items.OfType<JObject>())
+            {
+                string key = entry.Value<string>("key");
+                int bit = entry.Value<int?>("bitIndex") ?? -1;
+                if (string.IsNullOrEmpty(key) || bit < 0 || bit > AchievementCatalog.MaxBitIndex)
+                {
+                    result.Skipped.Add((key ?? "(no key)") + ": missing key or a bit index outside 0.." + AchievementCatalog.MaxBitIndex);
+                    continue;
+                }
+
+                var existing = Achievements.FirstOrDefault(a => a.Key == key);
+                if (existing != null)
+                {
+                    if (existing.BitIndex != bit)
+                    {
+                        bool free = !Achievements.Any(a => !ReferenceEquals(a, existing) && a.BitIndex == bit);
+                        if (existing.IsIdentityLocked || !free)
+                        {
+                            result.Skipped.Add(key + ": the manifest says bit " + bit + " but the dashboard has bit " + existing.BitIndex + (existing.IsIdentityLocked ? " (permanent once pushed)" : " (taken)"));
+                            continue;
+                        }
+                        existing.BitIndex = bit;
+                    }
+                    if (ApplyManifestFields(existing, entry)) result.Updated++; else result.Unchanged++;
+                    continue;
+                }
+
+                var taken = Achievements.FirstOrDefault(a => a.BitIndex == bit);
+                if (taken != null)
+                {
+                    result.Skipped.Add(key + ": bit " + bit + " is already used by '" + taken.Key + "'");
+                    continue;
+                }
+
+                var added = new DashboardAchievement { Key = key, BitIndex = bit };
+                ApplyManifestFields(added, entry);
+                Achievements.Add(added);
+                result.Added++;
+            }
+            return result;
+        }
+
+        private static bool ApplyManifestFields(DashboardAchievement a, JObject entry)
+        {
+            string before = a.BuildSnapshot();
+            var localization = entry["localization"] as JObject;
+
+            a.Title = entry.Value<string>("title") ?? a.Key;
+            a.Description = entry.Value<string>("description") ?? "";
+            a.IconPath = entry.Value<string>("icon") ?? "";
+            a.IconUrl = entry.Value<string>("iconUrl") ?? "";
+            a.Hidden = entry.Value<bool?>("hidden") == true;
+            a.Retired = entry.Value<bool?>("retired") == true;
+            a.DisplayOrder = entry.Value<int?>("displayOrder") ?? 0;
+            a.LocalizationTable = localization?.Value<string>("table") ?? "";
+            a.TitleKey = localization?.Value<string>("titleKey") ?? "";
+            a.DescriptionKey = localization?.Value<string>("descriptionKey") ?? "";
+            return a.BuildSnapshot() != before;
+        }
+
         public string BuildRulesJson(out List<string> skipped) => BuildRuleSet(out skipped).ToJson();
 
         // ---- localization ---------------------------------------------------------------------------------
@@ -498,6 +586,19 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
                 if (local == null)
                 {
+                    // A draft (imported from a manifest, or typed by hand) for an achievement Supabase already has:
+                    // link it to that row instead of adding a duplicate that would collide on the unique key.
+                    string key = row.Value<string>("achievement_key");
+                    int bit = row.Value<int>("bit_index");
+                    var draft = Achievements.FirstOrDefault(a => a.Id <= 0 && a.Key == key && a.BitIndex == bit);
+                    if (draft != null)
+                    {
+                        draft.Id = id;
+                        draft.SyncedSnapshot = DashboardAchievement.FromRow(row).BuildSnapshot(); // what the server holds
+                        result.Linked++;
+                        continue;
+                    }
+
                     Achievements.Add(DashboardAchievement.FromRow(row));
                     result.Added++;
                 }
@@ -589,6 +690,17 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         public int Added;
         public int Updated;
         public int LocalEditsKept;
+
+        /// <summary>Local drafts that turned out to be rows Supabase already has (same key and bit index).</summary>
+        public int Linked;
+    }
+
+    internal sealed class ImportResult
+    {
+        public int Added;
+        public int Updated;
+        public int Unchanged;
+        public List<string> Skipped { get; } = new List<string>();
     }
 
     /// <summary>Mirrors the database CHECK constraints so problems show up before a round trip fails.</summary>

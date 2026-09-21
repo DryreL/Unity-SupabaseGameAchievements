@@ -15,12 +15,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
     /// </summary>
     public sealed partial class AchievementDashboardWindow
     {
-        private enum Tab { Achievements, Rules }
+        private enum Tab { Achievements, Rules, Debug }
 
-        /// <summary>The "add a hookup" form of one role of one rule, kept between repaints.</summary>
+        /// <summary>The "add hookups" form of one role of one rule, kept between repaints.</summary>
         private sealed class BindingDraft
         {
-            public GameObject Target;
+            /// <summary>The scene objects to hook up. The component and member below are chosen from the first one.</summary>
+            public readonly List<GameObject> Targets = new List<GameObject>();
             public int ComponentIndex;
             public int SourceIndex;
             public int MemberIndex;
@@ -83,7 +84,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.Space(8);
-                int selected = GUILayout.Toolbar((int)_tab, new[] { "Achievements", "Rules  (" + _data.Rules.Count + ")" }, GUILayout.Height(24));
+                int selected = GUILayout.Toolbar((int)_tab, new[] { "Achievements", "Rules  (" + _data.Rules.Count + ")", "Debug" }, GUILayout.Height(24));
                 GUILayout.Space(8);
                 if (selected != (int)_tab)
                 {
@@ -445,51 +446,78 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
-                EditorGUILayout.LabelField("Add a hookup", _styles.Mini);
+                EditorGUILayout.LabelField("Add hookups  (as many objects as you like, they all trigger this rule)", _styles.Mini);
 
+                // The objects picked so far.
+                draft.Targets.RemoveAll(t => t == null);
+                GameObject toRemove = null;
+                foreach (var target in draft.Targets)
+                {
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        EditorGUILayout.ObjectField(target, typeof(GameObject), true);
+                        if (GUILayout.Button("x", EditorStyles.miniButton, GUILayout.Width(22))) toRemove = target;
+                    }
+                }
+                if (toRemove != null)
+                {
+                    draft.Targets.Remove(toRemove);
+                    draft.ResetPicks();
+                }
+
+                // Adding more: the object field, the current selection, or a drop from the Hierarchy.
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     var picked = (GameObject)EditorGUILayout.ObjectField(
-                        new GUIContent("Scene object", "Drag a GameObject (a Button, say) from the Hierarchy of an open scene."),
-                        draft.Target, typeof(GameObject), true);
-                    if (picked != draft.Target)
-                    {
-                        draft.Target = picked;
-                        draft.ResetPicks();
-                    }
+                        new GUIContent("Add object", "Pick a GameObject (a Button, say) from the Hierarchy of an open scene."), null, typeof(GameObject), true);
+                    if (picked != null) AddDraftTarget(draft, picked);
 
-                    if (GUILayout.Button(new GUIContent("Use selection", "Take the object currently selected in the Hierarchy."), GUILayout.Width(96)))
-                    {
-                        draft.Target = Selection.activeGameObject;
-                        draft.ResetPicks();
-                    }
+                    if (GUILayout.Button(new GUIContent("Use selection", "Add every scene object currently selected in the Hierarchy."), GUILayout.Width(96)))
+                        foreach (var selected in Selection.gameObjects) AddDraftTarget(draft, selected);
                 }
+                DrawDropArea(draft);
 
-                if (draft.Target == null) return;
+                if (draft.Targets.Count == 0) return;
 
-                var components = AchievementRuleWiring.HookableComponents(draft.Target);
-                if (components.Count == 0) { EditorGUILayout.HelpBox("This object has nothing to hook into.", MessageType.None); return; }
-
-                draft.ComponentIndex = Mathf.Clamp(draft.ComponentIndex, 0, components.Count - 1);
-                draft.ComponentIndex = EditorGUILayout.Popup("Component", draft.ComponentIndex, ComponentLabels(components));
-                var component = components[draft.ComponentIndex];
-
+                // What to hook into comes first: it decides which of the object's components are worth offering.
+                int previousSource = draft.SourceIndex;
                 draft.SourceIndex = EditorGUILayout.Popup(
                     new GUIContent("Hook into", "A UnityEvent calls the rule when it is invoked (Button click, Toggle, or a UnityEvent field of your script). A condition is a bool member of your script that the rule watches."),
                     draft.SourceIndex, new[] { "UnityEvent  (button click, toggle, your own event)", "Condition  (a bool method / property / field)" });
+                if (draft.SourceIndex != previousSource) draft.ResetPicks();
+                bool wantEvents = draft.SourceIndex == 0;
 
-                string[] members = draft.SourceIndex == 0
+                // Component and member come from the first object; the others use the same type and member.
+                // Components that offer something are listed first: an object's own first component is always its
+                // Transform, which never does, so defaulting to "the first component" would find nothing to hook.
+                var first = draft.Targets[0];
+                var components = AchievementRuleWiring.HookableComponents(first)
+                    .Select(c => new HookableComponent(c, HookableCount(c, wantEvents)))
+                    .OrderByDescending(x => x.Count > 0 ? 1 : 0)
+                    .ToList();
+
+                if (components.Count == 0 || components[0].Count == 0)
+                {
+                    DrawNothingToHook(draft, first, wantEvents);
+                    return;
+                }
+
+                draft.ComponentIndex = Mathf.Clamp(draft.ComponentIndex, 0, components.Count - 1);
+                draft.ComponentIndex = EditorGUILayout.Popup(
+                    new GUIContent("Component", draft.Targets.Count > 1 ? "Chosen from the first object; every other object uses its component of the same type." : "The component to hook into. Components with something to hook are listed first."),
+                    draft.ComponentIndex, ComponentLabels(components, wantEvents));
+                var component = components[draft.ComponentIndex].Component;
+
+                string[] members = wantEvents
                     ? AchievementRuleWiring.FindEvents(component).Select(e => e.Name).ToArray()
                     : AchievementRuleWiring.FindConditions(component).Select(m => m.ToString()).ToArray();
-                string[] memberNames = draft.SourceIndex == 0
+                string[] memberNames = wantEvents
                     ? members
                     : AchievementRuleWiring.FindConditions(component).Select(m => m.Name).ToArray();
 
                 if (members.Length == 0)
                 {
-                    EditorGUILayout.HelpBox(draft.SourceIndex == 0
-                        ? "This component exposes no UnityEvent. Pick a Button (onClick) or a script with a public UnityEvent field, or hook into a bool condition instead."
-                        : "This component has no bool method, property or field. Add e.g. `public bool BossDefeated => ...;` to your script and it will show up here.", MessageType.None);
+                    EditorGUILayout.HelpBox("This component has nothing to hook into. Pick one of the components marked with a count.", MessageType.None);
                     return;
                 }
 
@@ -502,58 +530,143 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 if (draft.SourceIndex == 1)
                     EditorGUILayout.LabelField("Fires each time the value turns true (checked 5 times a second). With IL2CPP code stripping, mark the member [UnityEngine.Scripting.Preserve].", _styles.Mini);
 
-                if (GUILayout.Button("Bind", GUILayout.Height(24)))
-                    BindDraft(rule, role, draft, component, memberNames[draft.MemberIndex]);
+                string bindLabel = draft.Targets.Count > 1 ? "Bind " + draft.Targets.Count + " objects" : "Bind";
+                if (GUILayout.Button(bindLabel, GUILayout.Height(24)))
+                    BindDraft(rule, role, draft, component.GetType(), memberNames[draft.MemberIndex]);
             }
         }
 
-        private static string[] ComponentLabels(List<Component> components)
+        private void AddDraftTarget(BindingDraft draft, GameObject go)
+        {
+            if (go == null || draft.Targets.Contains(go)) return;
+            if (EditorUtility.IsPersistent(go))
+            {
+                SetStatus("'" + go.name + "' is a prefab asset. Pick the object from a scene (open the prefab or the scene that contains it).", MessageType.Warning);
+                return;
+            }
+            draft.Targets.Add(go);
+            if (draft.Targets.Count == 1) draft.ResetPicks();
+        }
+
+        private void DrawDropArea(BindingDraft draft)
+        {
+            Rect area = GUILayoutUtility.GetRect(0, 28, GUILayout.ExpandWidth(true));
+            GUI.Box(area, "or drop scene objects here (from the Hierarchy)", EditorStyles.helpBox);
+
+            var current = Event.current;
+            if ((current.type != EventType.DragUpdated && current.type != EventType.DragPerform) || !area.Contains(current.mousePosition)) return;
+
+            DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+            if (current.type == EventType.DragPerform)
+            {
+                DragAndDrop.AcceptDrag();
+                foreach (var dropped in DragAndDrop.objectReferences)
+                    AddDraftTarget(draft, dropped as GameObject ?? (dropped as Component)?.gameObject);
+            }
+            current.Use();
+        }
+
+        private readonly struct HookableComponent
+        {
+            public HookableComponent(Component component, int count)
+            {
+                Component = component;
+                Count = count;
+            }
+
+            public Component Component { get; }
+
+            /// <summary>How many UnityEvents (or bool conditions) it offers.</summary>
+            public int Count { get; }
+        }
+
+        private static int HookableCount(Component component, bool wantEvents) =>
+            wantEvents ? AchievementRuleWiring.FindEvents(component).Count : AchievementRuleWiring.FindConditions(component).Count;
+
+        /// <summary>Nothing on the picked object can be hooked into: say why, and offer a child that can.</summary>
+        private void DrawNothingToHook(BindingDraft draft, GameObject picked, bool wantEvents)
+        {
+            EditorGUILayout.HelpBox(wantEvents
+                ? "Nothing on '" + picked.name + "' exposes a UnityEvent (a Button's onClick, a Toggle, or an event field of one of your scripts)."
+                : "Nothing on '" + picked.name + "' has a bool method, property or field to watch.", MessageType.None);
+
+            var child = picked.GetComponentsInChildren<Transform>(true)
+                .Select(t => t.gameObject)
+                .Skip(1) // the first entry is the picked object itself
+                .FirstOrDefault(g => AchievementRuleWiring.HookableComponents(g).Any(c => HookableCount(c, wantEvents) > 0));
+
+            if (child != null && GUILayout.Button("Use the child '" + AchievementRuleWiring.ObjectPath(child) + "' instead"))
+            {
+                draft.Targets[0] = child;
+                draft.ResetPicks();
+            }
+        }
+
+        private static string[] ComponentLabels(List<HookableComponent> components, bool wantEvents)
         {
             var seen = new Dictionary<string, int>();
-            return components.Select(c =>
+            return components.Select(x =>
             {
-                string name = c.GetType().Name;
+                string name = x.Component.GetType().Name;
                 seen[name] = seen.TryGetValue(name, out int count) ? count + 1 : 1;
-                return seen[name] > 1 ? name + " #" + seen[name] : name;
+                if (seen[name] > 1) name += " #" + seen[name];
+
+                string what = wantEvents ? "event" : "condition";
+                return x.Count > 0 ? name + "  (" + x.Count + " " + what + (x.Count > 1 ? "s" : "") + ")" : name + "  (nothing to hook)";
             }).ToArray();
         }
 
-        private void BindDraft(DashboardRule rule, string role, BindingDraft draft, Component component, string member)
+        private void BindDraft(DashboardRule rule, string role, BindingDraft draft, Type componentType, string member)
         {
             bool isEvent = draft.SourceIndex == 0;
-            var binding = new DashboardBinding
-            {
-                Role = role,
-                Source = isEvent ? DashboardBindingSource.UnityEvent : DashboardBindingSource.Condition,
-                ScenePath = component.gameObject.scene.path,
-                ObjectPath = AchievementRuleWiring.ObjectPath(component.gameObject),
-                ComponentType = component.GetType().Name,
-                Member = member,
-                Amount = Mathf.Max(1, draft.Amount),
-            };
-
-            if (rule.Bindings.Any(b => b.SameHookup(binding)))
-            {
-                SetStatus("That hookup already exists on this rule.", MessageType.Warning);
-                return;
-            }
-
             string eventName = rule.EventName(role);
-            string error = isEvent
-                ? AchievementRuleWiring.BindEvent(component, member, eventName, binding)
-                : AchievementRuleWiring.BindCondition(component, member, eventName, binding);
-            if (error != null)
+            int bound = 0;
+            var problems = new List<string>();
+            var done = new List<GameObject>();
+
+            foreach (var target in draft.Targets.ToList())
             {
-                SetStatus(error, MessageType.Warning);
-                return;
+                var component = AchievementRuleWiring.HookableComponents(target).FirstOrDefault(c => c.GetType() == componentType);
+                if (component == null) { problems.Add(target.name + ": no " + componentType.Name); continue; }
+
+                var binding = new DashboardBinding
+                {
+                    Role = role,
+                    Source = isEvent ? DashboardBindingSource.UnityEvent : DashboardBindingSource.Condition,
+                    ScenePath = target.scene.path,
+                    ObjectPath = AchievementRuleWiring.ObjectPath(target),
+                    ComponentType = componentType.Name,
+                    Member = member,
+                    Amount = Mathf.Max(1, draft.Amount),
+                };
+
+                if (rule.Bindings.Any(b => b.SameHookup(binding))) { problems.Add(target.name + ": already hooked up"); continue; }
+
+                string error = isEvent
+                    ? AchievementRuleWiring.BindEvent(component, member, eventName, binding)
+                    : AchievementRuleWiring.BindCondition(component, member, eventName, binding);
+                if (error != null) { problems.Add(target.name + ": " + error); continue; }
+
+                rule.Bindings.Add(binding);
+                done.Add(target);
+                bound++;
             }
 
-            rule.Bindings.Add(binding);
-            draft.Target = null;
-            draft.ResetPicks();
-            MarkDirty();
-            RefreshBindingScan();
-            SetStatus("Hooked " + binding.Describe() + " to '" + eventName + "'. Save the scene (Ctrl+S) to keep the trigger, and write rules.json.", MessageType.Info);
+            // Objects that failed stay in the list so they can be fixed or removed; the rest are done.
+            foreach (var finished in done) draft.Targets.Remove(finished);
+            if (draft.Targets.Count == 0) draft.ResetPicks();
+
+            if (bound > 0)
+            {
+                MarkDirty();
+                RefreshBindingScan();
+            }
+
+            string message = bound > 0
+                ? "Hooked " + bound + " object(s) to '" + eventName + "'. Save the scene (Ctrl+S) to keep the triggers, and write rules.json."
+                : "Nothing was hooked up.";
+            if (problems.Count > 0) message += " Skipped: " + string.Join("; ", problems) + ".";
+            SetStatus(message, problems.Count > 0 ? MessageType.Warning : MessageType.Info);
             GUIUtility.ExitGUI();
         }
 

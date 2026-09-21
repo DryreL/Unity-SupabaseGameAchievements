@@ -190,7 +190,7 @@ consumers (raw API, Patreon-specific turnkey, defensive/UI-first).
   `delete_retired_achievement(id)` (hard delete; the RPC itself refuses unless the row is already
   retired **and** has zero rows in `user_achievements` — the one sanctioned way past the
   `achievements_guard_identity` delete trigger). Reachable from **Tools → DryreL Hub → Supabase Game
-  Achievements → Manage Achievements**.
+  Achievements → Achievement Dashboard** (a retired achievement's *Danger zone*; the old separate Manage window was folded in).
 
 ---
 
@@ -246,7 +246,7 @@ both count the same achievement would double-count (`AchievementRuleSet` rejects
 `icon_path` in Supabase (and the manifest's `icon` field) can be either a **local Resources-relative
 path** (no extension — the historical/default behavior) or a **full URL** (`http://`, `https://`, or
 `www.` — detected by prefix, `www.` gets `https://` prepended). Both exporters (the Node script in the
-launcher repo and `AchievementCatalogExporterWindow` here) only strip the extension for local paths;
+launcher repo and `AchievementManifestBuilder` here) only strip the extension for local paths;
 a URL keeps it. `ResourcesAchievementIconProvider` picks the mode per-achievement automatically.
 
 **Icon style (Combined / Layered)** is a game-wide presentation setting stored on `public.games`
@@ -254,7 +254,7 @@ a URL keeps it. `ResourcesAchievementIconProvider` picks the mode per-achievemen
 also bumps `catalog_version` when they change) and carried by the **manifest** (`iconStyle`, `iconBackground`,
 `iconInset`, parsed into `AchievementCatalog.IconStyle` / `IconBackground` / `IconInset`; unknown style =
 Combined; only "layered" writes fields, so a Combined manifest is unchanged). All three exporters write it
-identically - `AchievementManifestBuilder.Build` (dashboard + `AchievementCatalogExporterWindow`) and
+identically - `AchievementManifestBuilder.Build` (the dashboard) and
 `buildManifest` in `scripts/export-achievement-catalog.mjs`; keep them in step. The dashboard tracks it
 like an achievement: `DashboardData.GameIconSnapshot` / `IsGameIconPending`, sent by the toolbar Push as a
 PATCH of the game row, read by Pull (`ApplyGameIcon`, unsent local edits win). Every reader retries without
@@ -317,9 +317,7 @@ All under **Tools → DryreL Hub → Supabase Game Achievements**:
 | Item | File | Notes |
 |---|---|---|
 | Achievement Dashboard | `Editor/AchievementDashboardWindow.cs` (UI + PostgREST) and `Editor/AchievementDashboardModel.cs` (data, validation, payloads, merge, manifest) | Editor for every `achievements` column. Working copy autosaved to `ProjectSettings/DryreLHub.AchievementDashboard.json`; each entry stores its server `id` after the first push, so later edits PATCH that row (mutable columns only - the identity trigger rejects `key`/`bit_index` changes). "Modified" is derived by comparing the current fields with `SyncedSnapshot`, not a dirty flag. Service key is session-only like the other windows; `sb_secret_` keys go in `apikey` only, JWT keys also in `Authorization` (same rule as the exporter). New entries get `icon_path = <IconFolder>/<key>` (`IconFolder` defaults to `images`, relative to the runtime icon prefix `Achievements/`); that auto path follows key/folder edits only for never-pushed entries. Localize button: `DashboardData.BuildLocalizationPlan()` (overrides, else `<key>_title`/`<key>_description` in `DefaultLocalizationTable`) is handed to `AchievementLocalizationBridge.Sync`, a hook in the Editor assembly that `Editor/Localization/` (own asmdef, `versionDefines`-gated on `com.unity.localization`, compiled against 1.5.13 only) assigns from an `[InitializeOnLoad]` constructor - the Editor assembly itself never references Unity Localization (same rule as §5). It only adds missing entries, never overwrites text. Never autosaves over a data file it failed to load. Logic is tested in `Tests/Editor/AchievementDashboardModelTests.cs`; the IMGUI/network layer was compile-checked only, not driven in a live Editor. |
-| Export Achievement Catalog | `Editor/AchievementCatalogExporterWindow.cs` | Pulls a game's catalog from Supabase, writes the manifest. Auto-fills Supabase URL/key from `PatreonConfig` via **reflection** (this assembly must stay portable — no hard Patreon reference here, unlike the Patreon sample). |
-| Manage Achievements | `Editor/AchievementManagementWindow.cs` | Retire/delete via the service-role-only RPCs (§7). |
-| Achievement Debug Window | `Editor/AchievementDebugWindow.cs` | Play Mode only. Per-achievement Unlock button, Sync Now / Reconcile buttons, live counts. Also hosts **Clear Local Achievements (Reset)**, which deletes the on-disk save under `Application.persistentDataPath/achievements` and calls `UnityAchievementManager.ResetLocalState()` if playing. |
+| *(folded into the dashboard)* | `Editor/AchievementDashboardWindow.Tools.cs`, `.Debug.cs`; helpers `AchievementManifestBuilder.cs` (also holds `PatreonConfigReflection`, which auto-fills the Supabase URL and the **publishable** key from `PatreonConfig` via **reflection** - this assembly must stay portable, no hard Patreon reference) and `AchievementCatalogImporter.cs` (`BuildImportSql` only) | The separate Export / Import / Manage / Debug windows and their menu items were removed (2026-09-21): **Export** = Connect & Pull + Manifest (a `sb_publishable_` key is treated as read-only: it can pull and write the manifest, `CanWrite` blocks push/create/delete); **Import** = *Import / SQL* menu (`DashboardData.ImportManifest` merges by key and never takes manifest ids, so the sequence-desync bug of the old REST import cannot recur; `MergeRemote` links a draft with the same key+bit to its server row; `BuildImportSql` restores ids and re-syncs the sequence); **Manage** = the Retired checkbox + Push, and the per-achievement *Danger zone* that calls `delete_retired_achievement`; **Debug** = the Debug tab (Play Mode: Unlock, Sync Now, Reconcile, **Clear Local Achievements (Reset)**, plus firing the dashboard rules' events and counter progress). |
 | Setup Achievements (Patreon) In Scene | `Samples~/PatreonIntegration/Editor/` | Only exists once that sample is imported (§5/§6). |
 
 ---

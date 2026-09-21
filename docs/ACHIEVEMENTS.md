@@ -164,7 +164,7 @@ clients. Sync still works for testers.
 
 Neither `anon` nor `authenticated` has any write grant on `achievements` — retiring or deleting one
 requires a service/secret key, via two RPCs (`20260918000000_achievement_admin.sql`), also reachable
-from **Tools → DryreL Hub → Supabase Game Achievements → Manage Achievements** in Unity:
+from the **Achievement Dashboard** in Unity (Retired checkbox + Push; a retired achievement's *Danger zone* for the hard delete):
 
 - `retire_achievement(p_achievement_id bigint)` — sets `is_retired = true`. Idempotent. This is the
   normal way to remove an achievement from play; its `bit_index` stays reserved forever.

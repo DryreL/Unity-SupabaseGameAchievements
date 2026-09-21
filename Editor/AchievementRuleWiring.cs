@@ -41,29 +41,50 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         // ------------------------------------------------------------------
 
         /// <summary>The UnityEvents a component exposes: public or [SerializeField] fields, and public properties (a Button's onClick).</summary>
-        public static List<EventMember> FindEvents(Component component)
+        public static List<EventMember> FindEvents(Component component) =>
+            component == null ? new List<EventMember>() : FindEventsOn(component);
+
+        /// <summary>Same as <see cref="FindEvents"/> for any object, so the lookup can be tested on plain classes.</summary>
+        internal static List<EventMember> FindEventsOn(object owner)
         {
             var found = new List<EventMember>();
-            if (component == null) return found;
 
-            foreach (var type in AchievementConditionReader.ScriptTypes(component.GetType()))
+            foreach (var type in AchievementConditionReader.ScriptTypes(owner.GetType()))
             {
-                foreach (var field in type.GetFields(Declared))
-                {
-                    if (!typeof(UnityEventBase).IsAssignableFrom(field.FieldType)) continue;
-                    if (!field.IsPublic && field.GetCustomAttribute<SerializeField>() == null) continue;
-                    if (field.GetValue(component) is UnityEventBase unityEvent) found.Add(new EventMember(field.Name, unityEvent));
-                }
-
+                // Properties before fields: a Button's public "onClick" and its private "m_OnClick" backing field are
+                // the same event, and the public name is the one worth showing.
                 foreach (var property in type.GetProperties(Declared))
                 {
                     if (!typeof(UnityEventBase).IsAssignableFrom(property.PropertyType)) continue;
                     if (property.GetIndexParameters().Length > 0 || property.GetGetMethod(false) == null) continue;
-                    if (property.GetValue(component) is UnityEventBase unityEvent) found.Add(new EventMember(property.Name, unityEvent));
+                    if (TryRead(() => property.GetValue(owner)) is UnityEventBase unityEvent) found.Add(new EventMember(property.Name, unityEvent));
+                }
+
+                foreach (var field in type.GetFields(Declared))
+                {
+                    if (!typeof(UnityEventBase).IsAssignableFrom(field.FieldType)) continue;
+                    if (!field.IsPublic && field.GetCustomAttribute<SerializeField>() == null) continue;
+                    if (TryRead(() => field.GetValue(owner)) is UnityEventBase unityEvent) found.Add(new EventMember(field.Name, unityEvent));
                 }
             }
 
-            return found.GroupBy(m => m.Name).Select(g => g.First()).OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
+            var unique = new List<EventMember>();
+            foreach (var member in found)
+                if (!unique.Any(u => u.Name == member.Name || ReferenceEquals(u.Event, member.Event))) unique.Add(member);
+            return unique.OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
+        }
+
+        // A property getter can throw for an object in an odd state; that member is simply not offered.
+        private static object TryRead(Func<object> read)
+        {
+            try
+            {
+                return read();
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         public static IReadOnlyList<AchievementConditionMember> FindConditions(Component component) =>
