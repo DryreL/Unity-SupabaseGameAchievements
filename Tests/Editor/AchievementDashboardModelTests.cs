@@ -137,10 +137,10 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
         }
 
         [Test]
-        public void New_entries_default_their_icon_path_to_the_images_folder()
+        public void New_entries_default_their_icon_path_to_the_icons_folder()
         {
             var a = Connected().AddNew();
-            Assert.AreEqual("images/new_achievement", a.IconPath);
+            Assert.AreEqual("icons/new_achievement", a.IconPath);
         }
 
         [Test]
@@ -160,7 +160,7 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             var data = Connected();
             var auto = data.AddNew();
             data.RenameKey(auto, "first_blood");
-            Assert.AreEqual("images/first_blood", auto.IconPath);
+            Assert.AreEqual("icons/first_blood", auto.IconPath);
 
             var manual = data.AddNew();
             manual.IconPath = "special/art";
@@ -195,7 +195,7 @@ namespace DryreLHub.SupabaseGameAchievements.Tests
             try
             {
                 File.WriteAllText(path, "{ \"FormatVersion\": 1, \"Achievements\": [] }");
-                Assert.AreEqual("images", DashboardData.Load(path).IconFolder);
+                Assert.AreEqual("icons", DashboardData.Load(path).IconFolder);
             }
             finally
             {

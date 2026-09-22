@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using DryreLHub.SupabaseGameAchievements.Unity;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -26,11 +27,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             public int SourceIndex;
             public int MemberIndex;
             public int Amount = 1;
+            public bool PicksInitialized;
 
             public void ResetPicks()
             {
                 ComponentIndex = 0;
                 MemberIndex = 0;
+                PicksInitialized = false;
             }
         }
 
@@ -165,6 +168,8 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private void DrawRulesToolbar()
         {
             EditorGUILayout.Space(2);
+            bool narrow = NarrowWindow;
+
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
                 if (GUILayout.Button(new GUIContent("+ Add Rule", "Add a rule for an achievement."), EditorStyles.toolbarButton, GUILayout.Width(80)))
@@ -174,17 +179,26 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 }
 
                 GUILayout.FlexibleSpace();
-
-                var previousColor = GUI.contentColor;
-                if (_rulesFileStale) GUI.contentColor = Palette.Modified;
-                GUILayout.Label(_rulesFileStale ? (_rulesFileMissing ? "rules.json not written yet" : "rules.json is out of date") : "rules.json is up to date", EditorStyles.miniLabel);
-                GUI.contentColor = previousColor;
-
-                if (GUILayout.Button(new GUIContent("Refresh", "Look for the triggers in the open scenes again."), EditorStyles.toolbarButton, GUILayout.Width(60)))
-                    RefreshBindingScan();
-                if (GUILayout.Button(new GUIContent("Write rules.json", "Save the rules where the game loads them from."), EditorStyles.toolbarButton, GUILayout.Width(108)))
-                    WriteRulesFile();
+                if (!narrow) DrawRulesFileState();
             }
+
+            if (narrow)
+                using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+                    DrawRulesFileState();
+        }
+
+        private void DrawRulesFileState()
+        {
+            var previousColor = GUI.contentColor;
+            if (_rulesFileStale) GUI.contentColor = Palette.Modified;
+            GUILayout.Label(_rulesFileStale ? (_rulesFileMissing ? "rules.json not written yet" : "rules.json is out of date") : "rules.json is up to date", EditorStyles.miniLabel);
+            GUI.contentColor = previousColor;
+
+            GUILayout.Space(8);
+            if (GUILayout.Button(new GUIContent("Refresh", "Look for the triggers in the open scenes again."), EditorStyles.toolbarButton, GUILayout.Width(60)))
+                RefreshBindingScan();
+            if (GUILayout.Button(new GUIContent("Write rules.json", "Save the rules where the game loads them from."), EditorStyles.toolbarButton, GUILayout.Width(108)))
+                WriteRulesFile();
         }
 
         private void AddRule()
@@ -528,6 +542,26 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     return;
                 }
 
+                // Default pick: a Button's onClick if the object has one, since that is what most hookups are.
+                // Otherwise fall back to the first component that has something to hook (already first in the list).
+                if (!draft.PicksInitialized)
+                {
+                    draft.PicksInitialized = true;
+                    if (wantEvents)
+                    {
+                        for (int i = 0; i < components.Count; i++)
+                        {
+                            if (!(components[i].Component is UnityEngine.UI.Button)) continue;
+                            var events = AchievementRuleWiring.FindEvents(components[i].Component);
+                            int onClickIndex = events.FindIndex(e => e.Name == "onClick");
+                            if (onClickIndex < 0) continue;
+                            draft.ComponentIndex = i;
+                            draft.MemberIndex = onClickIndex;
+                            break;
+                        }
+                    }
+                }
+
                 draft.ComponentIndex = Mathf.Clamp(draft.ComponentIndex, 0, components.Count - 1);
                 draft.ComponentIndex = EditorGUILayout.Popup(
                     new GUIContent("Component", draft.Targets.Count > 1 ? "Chosen from the first object; every other object uses its component of the same type." : "The component to hook into. Components with something to hook are listed first."),
@@ -615,6 +649,18 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             EditorGUILayout.HelpBox(wantEvents
                 ? "Nothing on '" + picked.name + "' exposes a UnityEvent (a Button's onClick, a Toggle, or an event field of one of your scripts)."
                 : "Nothing on '" + picked.name + "' has a bool method, property or field to watch.", MessageType.None);
+
+            if (wantEvents && picked.GetComponent<AchievementColliderEvents>() == null &&
+                (picked.GetComponent<Collider>() != null || picked.GetComponent<Collider2D>() != null))
+            {
+                EditorGUILayout.Space(2);
+                if (GUILayout.Button("Add 'Achievement Collider Events'  (so an OnTrigger/OnCollision can unlock this)"))
+                {
+                    Undo.AddComponent<AchievementColliderEvents>(picked);
+                    draft.ResetPicks();
+                }
+                return;
+            }
 
             var child = picked.GetComponentsInChildren<Transform>(true)
                 .Select(t => t.gameObject)

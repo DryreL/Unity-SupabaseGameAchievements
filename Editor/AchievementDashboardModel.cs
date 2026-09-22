@@ -212,10 +212,10 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         /// <summary>
         /// Default folder for icons, relative to the runtime's icon prefix (<c>Achievements/</c> in the bundled
-        /// bootstraps): an icon for "first_blood" lives at <c>Assets/Resources/Achievements/images/first_blood.png</c>
-        /// and its <c>icon_path</c> is <c>images/first_blood</c>.
+        /// bootstraps): an icon for "first_blood" lives at <c>Assets/Resources/Achievements/icons/first_blood.png</c>
+        /// and its <c>icon_path</c> is <c>icons/first_blood</c>.
         /// </summary>
-        public const string DefaultIconFolder = "images";
+        public const string DefaultIconFolder = "icons";
 
         /// <summary>Default Unity Localization string table (and asset folder name) for achievement text.</summary>
         public const string DefaultLocalizationTableName = "ST_Achievements";
@@ -424,7 +424,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         /// <summary>
         /// Renames a key. While the icon path is still the auto-generated one it follows the key, so typing a
-        /// key does not leave a stale "images/new_achievement"; a path the user edited by hand is left alone.
+        /// key does not leave a stale "icons/new_achievement"; a path the user edited by hand is left alone.
         /// </summary>
         public void RenameKey(DashboardAchievement achievement, string newKey)
         {

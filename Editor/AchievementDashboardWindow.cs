@@ -343,44 +343,60 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             }
         }
 
+        /// <summary>Below this window width, toolbars wrap onto a second row instead of pushing buttons off-screen.</summary>
+        private bool NarrowWindow => position.width < 520f;
+
         private void DrawToolbar()
         {
             EditorGUILayout.Space(2);
+            bool narrow = NarrowWindow;
+
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                _search = GUILayout.TextField(_search, EditorStyles.toolbarSearchField, GUILayout.MinWidth(140), GUILayout.MaxWidth(280));
+                _search = GUILayout.TextField(_search, EditorStyles.toolbarSearchField, GUILayout.MinWidth(80), GUILayout.MaxWidth(narrow ? 2000 : 280), GUILayout.ExpandWidth(narrow));
                 _filter = (Filter)EditorGUILayout.EnumPopup(_filter, EditorStyles.toolbarPopup, GUILayout.Width(84));
-                GUILayout.FlexibleSpace();
-
-                using (new EditorGUI.DisabledScope(!CanTalkToSupabase(out _) || string.IsNullOrEmpty(_data.GameSlug)))
+                if (!narrow)
                 {
-                    if (GUILayout.Button(new GUIContent("Pull", "Fetch this game's rows from Supabase. Entries with unsent local edits are kept."), EditorStyles.toolbarButton, GUILayout.Width(50)))
-                        ConnectAndPull();
+                    GUILayout.FlexibleSpace();
+                    DrawToolbarActions();
                 }
-
-                int pending = _data.Pending.Count() + (_data.IsGameIconPending ? 1 : 0);
-                using (new EditorGUI.DisabledScope(pending == 0 || _data.GameId <= 0 || !CanWrite(out _)))
-                {
-                    if (GUILayout.Button(new GUIContent("Push " + (pending > 0 ? "(" + pending + ")" : ""), "Send every new or modified achievement, and a changed icon style, to Supabase."), EditorStyles.toolbarButton, GUILayout.Width(74)))
-                        PushItems(_data.Pending.ToList(), true);
-                }
-
-                using (new EditorGUI.DisabledScope(_data.Achievements.Count == 0))
-                {
-                    if (GUILayout.Button(new GUIContent("Localize", "Create the string table (if missing) and one <key>_title / <key>_description entry per achievement, unless overridden."), EditorStyles.toolbarButton, GUILayout.Width(66)))
-                        CreateLocalizationTable();
-                }
-
-                using (new EditorGUI.DisabledScope(_data.GameId <= 0 || _data.Achievements.All(a => a.Id <= 0)))
-                {
-                    if (GUILayout.Button(new GUIContent("Manifest", "Write the manifest JSON the game ships, from this dashboard."), EditorStyles.toolbarButton, GUILayout.Width(70)))
-                        GenerateManifest();
-                }
-
-                if (EditorGUILayout.DropdownButton(new GUIContent("Import / SQL", "Import an achievements.json into the dashboard, or generate an SQL script that restores the catalog with its ids."),
-                        FocusType.Passive, EditorStyles.toolbarDropDown, GUILayout.Width(92)))
-                    ShowFileMenu(GUILayoutUtility.GetLastRect());
             }
+
+            if (narrow)
+                using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+                    DrawToolbarActions();
+        }
+
+        private void DrawToolbarActions()
+        {
+            using (new EditorGUI.DisabledScope(!CanTalkToSupabase(out _) || string.IsNullOrEmpty(_data.GameSlug)))
+            {
+                if (GUILayout.Button(new GUIContent("Pull", "Fetch this game's rows from Supabase. Entries with unsent local edits are kept."), EditorStyles.toolbarButton, GUILayout.Width(50)))
+                    ConnectAndPull();
+            }
+
+            int pending = _data.Pending.Count() + (_data.IsGameIconPending ? 1 : 0);
+            using (new EditorGUI.DisabledScope(pending == 0 || _data.GameId <= 0 || !CanWrite(out _)))
+            {
+                if (GUILayout.Button(new GUIContent("Push " + (pending > 0 ? "(" + pending + ")" : ""), "Send every new or modified achievement, and a changed icon style, to Supabase."), EditorStyles.toolbarButton, GUILayout.Width(74)))
+                    PushItems(_data.Pending.ToList(), true);
+            }
+
+            using (new EditorGUI.DisabledScope(_data.Achievements.Count == 0))
+            {
+                if (GUILayout.Button(new GUIContent("Localize", "Create the string table (if missing) and one <key>_title / <key>_description entry per achievement, unless overridden."), EditorStyles.toolbarButton, GUILayout.Width(66)))
+                    CreateLocalizationTable();
+            }
+
+            using (new EditorGUI.DisabledScope(_data.GameId <= 0 || _data.Achievements.All(a => a.Id <= 0)))
+            {
+                if (GUILayout.Button(new GUIContent("Manifest", "Write the manifest JSON the game ships, from this dashboard."), EditorStyles.toolbarButton, GUILayout.Width(70)))
+                    GenerateManifest();
+            }
+
+            if (EditorGUILayout.DropdownButton(new GUIContent("Import / SQL", "Import an achievements.json into the dashboard, or generate an SQL script that restores the catalog with its ids."),
+                    FocusType.Passive, EditorStyles.toolbarDropDown, GUILayout.Width(92)))
+                ShowFileMenu(GUILayoutUtility.GetLastRect());
         }
 
         private void DrawConnection()
@@ -452,7 +468,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
                 EditorGUI.BeginChangeCheck();
                 string iconFolder = EditorGUILayout.TextField(
-                    new GUIContent("Icon Folder", "New achievements get icon_path = <folder>/<key>. Relative to the runtime's icon prefix (Achievements/ in the bundled bootstraps), so the default 'images' means Assets/Resources/Achievements/images/<key>.png. Rename it freely; icon paths of never-pushed achievements follow."),
+                    new GUIContent("Icon Folder", "New achievements get icon_path = <folder>/<key>. Relative to the runtime's icon prefix (Achievements/ in the bundled bootstraps), so the default 'icons' means Assets/Resources/Achievements/icons/<key>.png. Rename it freely; icon paths of never-pushed achievements follow."),
                     _data.IconFolder);
                 if (EditorGUI.EndChangeCheck())
                 {
@@ -467,7 +483,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 if (styleIndex == (int)AchievementIconStyle.Layered)
                 {
                     _data.IconBackground = HintTextField(
-                        new GUIContent("Icon Background", "The shared background image, relative to the icon prefix, no extension. Empty = <Icon Folder>/background, i.e. Assets/Resources/Achievements/images/background.png."),
+                        new GUIContent("Icon Background", "The shared background image, relative to the icon prefix, no extension. Empty = <Icon Folder>/background, i.e. Assets/Resources/Achievements/icons/background.png."),
                         _data.IconBackground, _data.IconPathFor("background"));
                     _data.IconInset = EditorGUILayout.Slider(
                         new GUIContent("Icon Inset", "Margin around the icon inside the background, as a fraction of its size."),
@@ -685,7 +701,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             {
                 using (new EditorGUILayout.VerticalScope())
                 {
-                    a.IconPath = EditorGUILayout.TextField(new GUIContent("Icon Path", "Relative to the icon prefix, no extension, e.g. images/first_blood - or a full URL. Filled from the Icon Folder setting."), a.IconPath);
+                    a.IconPath = EditorGUILayout.TextField(new GUIContent("Icon Path", "Relative to the icon prefix, no extension, e.g. icons/first_blood - or a full URL. Filled from the Icon Folder setting."), a.IconPath);
                     a.IconUrl = EditorGUILayout.TextField(new GUIContent("Icon URL", "Optional. Downloaded first; falls back to Icon Path on any failure."), a.IconUrl);
                 }
                 Rect preview = GUILayoutUtility.GetRect(64, 64, GUILayout.Width(64), GUILayout.Height(64));
@@ -1137,7 +1153,21 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             string problem = DashboardValidator.ValidateLocalizationSetup(_data.DefaultLocalizationTable, _data.LocalizationFolder);
             if (problem != null) { Fail(problem); return; }
 
+            if (!_overlayLoaded) LoadOverlayFile();
+
             var plan = _data.BuildLocalizationPlan();
+
+            // The overlay's header ("ACHIEVEMENT UNLOCKED") reads from this table/key at runtime; register it here too,
+            // so pressing Localize once sets up every string the toast needs. Cleared fields opt out of localizing it.
+            string headerTable = (_overlay.headerLocalizationTable ?? "").Trim();
+            string headerKey = (_overlay.headerLocalizationKey ?? "").Trim();
+            if (!string.IsNullOrEmpty(headerTable) && !string.IsNullOrEmpty(headerKey) &&
+                !plan.Any(p => p.Table == headerTable && p.Key == headerKey))
+            {
+                string headerText = string.IsNullOrWhiteSpace(_overlay.headerText) ? "ACHIEVEMENT UNLOCKED" : _overlay.headerText;
+                plan.Add(new LocalizationEntryPlan(headerTable, headerKey, headerText));
+            }
+
             if (plan.Count == 0) { Fail("Add an achievement with a key first."); return; }
 
             var tables = plan.Select(p => p.Table).Distinct().ToList();

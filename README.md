@@ -171,7 +171,7 @@ is always offline-safe and instant — no network, ever.
 1. **Combined** (default): each achievement's image already contains its own background. Nothing to set up.
 2. **Layered**: one shared background image for every achievement, plus each achievement's own icon drawn
    on top, shrunk to leave a margin (`iconInset`, 0.18 of the background by default). Put the background
-   at `Assets/Resources/<prefix><IconFolder>/background.png` (e.g. `Assets/Resources/Achievements/images/background.png`)
+   at `Assets/Resources/<prefix><IconFolder>/background.png` (e.g. `Assets/Resources/Achievements/icons/background.png`)
    and give each achievement a transparent icon.
 
 The **Achievement Dashboard** has an *Icon Style* setting (under *Connection & files*) that shows both in
@@ -507,8 +507,8 @@ The Patreon sample adds one more once imported: **Setup Achievements (Patreon) I
    service/secret key (kept for the session, never saved to disk) and the game slug, then **Connect & Pull**.
    If the game does not exist yet, **Create Game** adds it (inactive until you set `is_active = true`).
 2. **+ Add Achievement** creates a card with the next free bit index (retired ones count) and an icon path of
-   `<Icon Folder>/<key>`. The **Icon Folder** setting defaults to `images`, so with the `Achievements/` icon
-   prefix the sprite goes to `Assets/Resources/Achievements/images/<key>.png`; rename the folder there if you
+   `<Icon Folder>/<key>`. The **Icon Folder** setting defaults to `icons`, so with the `Achievements/` icon
+   prefix the sprite goes to `Assets/Resources/Achievements/icons/<key>.png`; rename the folder there if you
    prefer another name (paths of not-yet-pushed cards follow). Fill in key,
    title, description, icons, hidden/retired, display order and the optional localization fields. Fields are
    checked against the database constraints as you type.
