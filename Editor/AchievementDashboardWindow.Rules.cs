@@ -486,10 +486,21 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
-                EditorGUILayout.LabelField("Add hookups  (as many objects as you like, they all trigger this rule)", _styles.Mini);
-
                 // The objects picked so far.
                 draft.Targets.RemoveAll(t => t == null);
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField("Add hookups  (as many objects as you like, they all trigger this rule)", _styles.Mini);
+                    GUILayout.FlexibleSpace();
+                    if (draft.Targets.Count >= 2 &&
+                        GUILayout.Button(new GUIContent("Clear (" + draft.Targets.Count + ")", "Remove every object picked so far, without binding anything."), EditorStyles.miniButton, GUILayout.Width(70)))
+                    {
+                        draft.Targets.Clear();
+                        draft.ResetPicks();
+                    }
+                }
+
                 GameObject toRemove = null;
                 foreach (var target in draft.Targets)
                 {
@@ -569,7 +580,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                         }
 
                         if (!TryPickDefault(c => c is UnityEngine.UI.Button, "onClick"))
-                            TryPickDefault(c => c is AchievementColliderEvents, "onTriggerEnter");
+                        {
+                            // 2D and 3D physics never call each other's messages, so the member has to match
+                            // whichever collider the object actually has, or it will silently never fire.
+                            if (!TryPickDefault(c => c is AchievementColliderEvents && c.GetComponent<Collider2D>() != null, "onTriggerEnter2D"))
+                                TryPickDefault(c => c is AchievementColliderEvents, "onTriggerEnter");
+                        }
                     }
                 }
 
@@ -676,20 +692,38 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             if (!wantEvents) return;
 
-            var colliderHolder = picked.GetComponentsInChildren<Transform>(true)
-                .Select(t => t.gameObject)
-                .FirstOrDefault(g => g.GetComponent<AchievementColliderEvents>() == null &&
-                                      (g.GetComponent<Collider>() != null || g.GetComponent<Collider2D>() != null));
+            var colliderHolder = FindColliderWithoutRelay(picked);
             if (colliderHolder == null) return;
 
             EditorGUILayout.Space(2);
             string where = colliderHolder == picked ? "" : "  (on '" + AchievementRuleWiring.ObjectPath(colliderHolder) + "')";
-            if (GUILayout.Button("Add 'Achievement Collider Events'" + where + "  (so an OnTrigger/OnCollision can unlock this)"))
+            string suffix = "  (so an OnTrigger/OnCollision can unlock this)";
+            string label = draft.Targets.Count > 1
+                ? "Add 'Achievement Collider Events' to all " + draft.Targets.Count + " objects" + suffix
+                : "Add 'Achievement Collider Events'" + where + suffix;
+
+            if (GUILayout.Button(label))
             {
-                Undo.AddComponent<AchievementColliderEvents>(colliderHolder);
+                int added = 0;
+                foreach (var target in draft.Targets)
+                {
+                    var holder = FindColliderWithoutRelay(target);
+                    if (holder == null) continue;
+                    Undo.AddComponent<AchievementColliderEvents>(holder);
+                    added++;
+                }
                 draft.ResetPicks();
+                if (added > 1) SetStatus("Added 'Achievement Collider Events' to " + added + " object(s).", MessageType.Info);
             }
         }
+
+        /// <summary>The first object in <paramref name="root"/>'s own hierarchy (it or a descendant) with a Collider/Collider2D
+        /// but no Achievement Collider Events yet, or null when every collider there already has one.</summary>
+        private static GameObject FindColliderWithoutRelay(GameObject root) =>
+            root.GetComponentsInChildren<Transform>(true)
+                .Select(t => t.gameObject)
+                .FirstOrDefault(g => g.GetComponent<AchievementColliderEvents>() == null &&
+                                      (g.GetComponent<Collider>() != null || g.GetComponent<Collider2D>() != null));
 
         private static string[] ComponentLabels(GameObject owner, List<HookableComponent> components, bool wantEvents)
         {
