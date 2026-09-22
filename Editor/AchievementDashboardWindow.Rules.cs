@@ -506,15 +506,18 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 }
 
                 // Adding more: the object field, the current selection, or a drop from the Hierarchy.
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    var picked = (GameObject)EditorGUILayout.ObjectField(
-                        new GUIContent("Add object", "Pick a GameObject (a Button, say) from the Hierarchy of an open scene."), null, typeof(GameObject), true);
-                    if (picked != null) AddDraftTarget(draft, picked);
+                // A multi-object drag is intercepted before the object field gets to it, since that field can
+                // only ever hold one value and would otherwise silently keep just one of the dragged objects.
+                Rect fieldRow = EditorGUILayout.BeginHorizontal();
+                InterceptMultiObjectDrag(fieldRow, draft);
+                var picked = (GameObject)EditorGUILayout.ObjectField(
+                    new GUIContent("Add object", "Pick a GameObject (a Button, say) from the Hierarchy of an open scene, or drag one or many here."), null, typeof(GameObject), true);
+                if (picked != null) AddDraftTarget(draft, picked);
 
-                    if (GUILayout.Button(new GUIContent("Use selection", "Add every scene object currently selected in the Hierarchy."), GUILayout.Width(96)))
-                        foreach (var selected in Selection.gameObjects) AddDraftTarget(draft, selected);
-                }
+                if (GUILayout.Button(new GUIContent("Use selection", "Add every scene object currently selected in the Hierarchy."), GUILayout.Width(96)))
+                    foreach (var selected in Selection.gameObjects) AddDraftTarget(draft, selected);
+                EditorGUILayout.EndHorizontal();
+
                 DrawDropArea(draft);
 
                 if (draft.Targets.Count == 0) return;
@@ -542,23 +545,30 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     return;
                 }
 
-                // Default pick: a Button's onClick if the object has one, since that is what most hookups are.
-                // Otherwise fall back to the first component that has something to hook (already first in the list).
+                // Default pick, in order: a Button's onClick (most hookups are a button); else an OnTriggerEnter
+                // already exposed by Achievement Collider Events, if that component is on the object; else fall
+                // back to the first component that has something to hook (already first in the list).
                 if (!draft.PicksInitialized)
                 {
                     draft.PicksInitialized = true;
                     if (wantEvents)
                     {
-                        for (int i = 0; i < components.Count; i++)
+                        bool TryPickDefault(Func<Component, bool> match, string memberName)
                         {
-                            if (!(components[i].Component is UnityEngine.UI.Button)) continue;
-                            var events = AchievementRuleWiring.FindEvents(components[i].Component);
-                            int onClickIndex = events.FindIndex(e => e.Name == "onClick");
-                            if (onClickIndex < 0) continue;
-                            draft.ComponentIndex = i;
-                            draft.MemberIndex = onClickIndex;
-                            break;
+                            for (int i = 0; i < components.Count; i++)
+                            {
+                                if (!match(components[i].Component)) continue;
+                                int index = AchievementRuleWiring.FindEvents(components[i].Component).FindIndex(e => e.Name == memberName);
+                                if (index < 0) continue;
+                                draft.ComponentIndex = i;
+                                draft.MemberIndex = index;
+                                return true;
+                            }
+                            return false;
                         }
+
+                        if (!TryPickDefault(c => c is UnityEngine.UI.Button, "onClick"))
+                            TryPickDefault(c => c is AchievementColliderEvents, "onTriggerEnter");
                     }
                 }
 
@@ -612,9 +622,22 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         {
             Rect area = GUILayoutUtility.GetRect(0, 28, GUILayout.ExpandWidth(true));
             GUI.Box(area, "or drop scene objects here (from the Hierarchy)", EditorStyles.helpBox);
+            AcceptObjectDrag(area, draft, requireMultiple: false);
+        }
 
+        /// <summary>
+        /// Used on the "Add object" row so a multi-selection drag is claimed here, before Unity's ObjectField gets
+        /// to it: an ObjectField can only ever hold one value, so dropping several objects onto it would otherwise
+        /// silently keep just one and discard the rest. A single-object drag is left alone, so the field still
+        /// shows its normal drag preview and click-to-browse picker.
+        /// </summary>
+        private void InterceptMultiObjectDrag(Rect area, BindingDraft draft) => AcceptObjectDrag(area, draft, requireMultiple: true);
+
+        private void AcceptObjectDrag(Rect area, BindingDraft draft, bool requireMultiple)
+        {
             var current = Event.current;
             if ((current.type != EventType.DragUpdated && current.type != EventType.DragPerform) || !area.Contains(current.mousePosition)) return;
+            if (requireMultiple && DragAndDrop.objectReferences.Length <= 1) return;
 
             DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
             if (current.type == EventType.DragPerform)

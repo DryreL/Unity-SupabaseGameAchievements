@@ -238,7 +238,13 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.Space(8);
-                GUILayout.Label(_overlayFileExists ? "Saved automatically to " + AchievementOverlayFile.DefaultPath : "Nothing saved yet: the toast uses its built-in look until you change something.", _styles.Mini);
+                // Wraps instead of a single fixed-width line, so a long path never forces a horizontal scrollbar.
+                EditorGUILayout.LabelField(_overlayFileExists ? "Saved automatically to " + AchievementOverlayFile.DefaultPath : "Nothing saved yet: the toast uses its built-in look until you change something.", EditorStyles.wordWrappedMiniLabel);
+                GUILayout.Space(8);
+            }
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(8);
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("Reset to defaults", EditorStyles.miniButton, GUILayout.Width(110)) &&
                     EditorUtility.DisplayDialog("Reset the toast", "Put every overlay setting back to its default? Your custom prefab (if any) is disconnected but not deleted.", "Reset", "Cancel"))
@@ -261,16 +267,24 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
         private void DrawLiveControls()
         {
+            // Side by side when there is room for both long labels; stacked (each full width) when the
+            // window is docked narrow, so neither button gets clipped or forces a horizontal scrollbar.
+            bool narrow = NarrowWindow;
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.Space(8);
-                if (GUILayout.Button("Replay animation in the preview", GUILayout.Height(22))) _previewStart = EditorApplication.timeSinceStartup;
-
-                var overlay = RunningOverlay;
-                using (new EditorGUI.DisabledScope(overlay == null || !AchievementManager.IsInitialized))
+                if (narrow)
                 {
-                    if (GUILayout.Button(new GUIContent("Show a test toast in the game", "Play Mode only: shows a toast for the first achievement, exactly as an unlock would, without unlocking it."), GUILayout.Height(22)))
-                        ShowTestToast();
+                    using (new EditorGUILayout.VerticalScope())
+                    {
+                        DrawReplayButton();
+                        DrawTestToastButton();
+                    }
+                }
+                else
+                {
+                    DrawReplayButton();
+                    DrawTestToastButton();
                 }
                 GUILayout.Space(8);
             }
@@ -279,6 +293,21 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 EditorGUILayout.LabelField("Enter Play Mode to see the real toast: every change here is applied to the running game as you make it.", EditorStyles.wordWrappedMiniLabel);
             else if (RunningOverlay == null)
                 EditorGUILayout.HelpBox("The achievement system is not running in this scene, so there is no toast to test. Check 'Game setup' on the Achievements tab.", MessageType.Warning);
+        }
+
+        private void DrawReplayButton()
+        {
+            if (GUILayout.Button("Replay animation in the preview", GUILayout.Height(22))) _previewStart = EditorApplication.timeSinceStartup;
+        }
+
+        private void DrawTestToastButton()
+        {
+            var overlay = RunningOverlay;
+            using (new EditorGUI.DisabledScope(overlay == null || !AchievementManager.IsInitialized))
+            {
+                if (GUILayout.Button(new GUIContent("Show a test toast in the game", "Play Mode only: shows a toast for the first achievement, exactly as an unlock would, without unlocking it."), GUILayout.Height(22)))
+                    ShowTestToast();
+            }
         }
 
         private void ShowTestToast()
