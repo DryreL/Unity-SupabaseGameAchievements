@@ -520,14 +520,24 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                     "child is the panel, the icon and the texts. Follow the steps, or press the button to get a finished starter prefab and restyle that.",
                     EditorStyles.wordWrappedLabel);
                 EditorGUILayout.Space(2);
+                // Two fairly long labels: stacked (full width each) when the window is docked narrow, so they
+                // never force this card - and the paragraph above, which wraps to the card's width - wider than
+                // the window (which is what forced a horizontal scrollbar here before).
+                bool narrow = NarrowWindow;
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    if (GUILayout.Button(new GUIContent("Create a starter prefab for me", "Builds steps 1-6 in one click: a working toast prefab in " + AchievementOverlayFile.PrefabFolder + ", already connected."), GUILayout.Height(26)))
-                        CreateStarter();
-                    if (GUILayout.Button("Watch the toast in the preview", GUILayout.Height(26), GUILayout.Width(200)))
+                    if (narrow)
                     {
-                        _overlayPage = OverlayPage.Customize;
-                        _previewStart = EditorApplication.timeSinceStartup;
+                        using (new EditorGUILayout.VerticalScope())
+                        {
+                            DrawStarterPrefabButton();
+                            DrawWatchInPreviewButton(GUILayout.ExpandWidth(true));
+                        }
+                    }
+                    else
+                    {
+                        DrawStarterPrefabButton();
+                        DrawWatchInPreviewButton(GUILayout.Width(200));
                     }
                 }
             }
@@ -587,6 +597,21 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
             }
 
             DrawPrefabChecker();
+        }
+
+        private void DrawStarterPrefabButton()
+        {
+            if (GUILayout.Button(new GUIContent("Create a starter prefab for me", "Builds steps 1-6 in one click: a working toast prefab in " + AchievementOverlayFile.PrefabFolder + ", already connected."), GUILayout.Height(26)))
+                CreateStarter();
+        }
+
+        private void DrawWatchInPreviewButton(GUILayoutOption widthOption)
+        {
+            if (GUILayout.Button("Watch the toast in the preview", GUILayout.Height(26), widthOption))
+            {
+                _overlayPage = OverlayPage.Customize;
+                _previewStart = EditorApplication.timeSinceStartup;
+            }
         }
 
         private void Step(int number, string title, string body)

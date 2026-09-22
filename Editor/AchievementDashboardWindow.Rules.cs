@@ -530,11 +530,12 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 if (draft.SourceIndex != previousSource) draft.ResetPicks();
                 bool wantEvents = draft.SourceIndex == 0;
 
-                // Component and member come from the first object; the others use the same type and member.
-                // Components that offer something are listed first: an object's own first component is always its
-                // Transform, which never does, so defaulting to "the first component" would find nothing to hook.
+                // Component and member come from the first object (its own components, then its children's - a
+                // trigger collider or a button is often nested a level or two down); the others use the same type
+                // and member. Components that offer something are listed first: an object's own first component is
+                // always its Transform, which never does, so defaulting to "the first component" would find nothing.
                 var first = draft.Targets[0];
-                var components = AchievementRuleWiring.HookableComponents(first)
+                var components = AchievementRuleWiring.HookableComponentsInHierarchy(first)
                     .Select(c => new HookableComponent(c, HookableCount(c, wantEvents)))
                     .OrderByDescending(x => x.Count > 0 ? 1 : 0)
                     .ToList();
@@ -575,7 +576,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 draft.ComponentIndex = Mathf.Clamp(draft.ComponentIndex, 0, components.Count - 1);
                 draft.ComponentIndex = EditorGUILayout.Popup(
                     new GUIContent("Component", draft.Targets.Count > 1 ? "Chosen from the first object; every other object uses its component of the same type." : "The component to hook into. Components with something to hook are listed first."),
-                    draft.ComponentIndex, ComponentLabels(components, wantEvents));
+                    draft.ComponentIndex, ComponentLabels(first, components, wantEvents));
                 var component = components[draft.ComponentIndex].Component;
 
                 string[] members = wantEvents
@@ -666,38 +667,31 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         private static int HookableCount(Component component, bool wantEvents) =>
             wantEvents ? AchievementRuleWiring.FindEvents(component).Count : AchievementRuleWiring.FindConditions(component).Count;
 
-        /// <summary>Nothing on the picked object can be hooked into: say why, and offer a child that can.</summary>
+        /// <summary>Nothing anywhere in the object's hierarchy (it or its children) can be hooked into: say why, and offer a quick fix.</summary>
         private void DrawNothingToHook(BindingDraft draft, GameObject picked, bool wantEvents)
         {
             EditorGUILayout.HelpBox(wantEvents
-                ? "Nothing on '" + picked.name + "' exposes a UnityEvent (a Button's onClick, a Toggle, or an event field of one of your scripts)."
-                : "Nothing on '" + picked.name + "' has a bool method, property or field to watch.", MessageType.None);
+                ? "Nothing on '" + picked.name + "' or its children exposes a UnityEvent (a Button's onClick, a Toggle, or an event field of one of your scripts)."
+                : "Nothing on '" + picked.name + "' or its children has a bool method, property or field to watch.", MessageType.None);
 
-            if (wantEvents && picked.GetComponent<AchievementColliderEvents>() == null &&
-                (picked.GetComponent<Collider>() != null || picked.GetComponent<Collider2D>() != null))
-            {
-                EditorGUILayout.Space(2);
-                if (GUILayout.Button("Add 'Achievement Collider Events'  (so an OnTrigger/OnCollision can unlock this)"))
-                {
-                    Undo.AddComponent<AchievementColliderEvents>(picked);
-                    draft.ResetPicks();
-                }
-                return;
-            }
+            if (!wantEvents) return;
 
-            var child = picked.GetComponentsInChildren<Transform>(true)
+            var colliderHolder = picked.GetComponentsInChildren<Transform>(true)
                 .Select(t => t.gameObject)
-                .Skip(1) // the first entry is the picked object itself
-                .FirstOrDefault(g => AchievementRuleWiring.HookableComponents(g).Any(c => HookableCount(c, wantEvents) > 0));
+                .FirstOrDefault(g => g.GetComponent<AchievementColliderEvents>() == null &&
+                                      (g.GetComponent<Collider>() != null || g.GetComponent<Collider2D>() != null));
+            if (colliderHolder == null) return;
 
-            if (child != null && GUILayout.Button("Use the child '" + AchievementRuleWiring.ObjectPath(child) + "' instead"))
+            EditorGUILayout.Space(2);
+            string where = colliderHolder == picked ? "" : "  (on '" + AchievementRuleWiring.ObjectPath(colliderHolder) + "')";
+            if (GUILayout.Button("Add 'Achievement Collider Events'" + where + "  (so an OnTrigger/OnCollision can unlock this)"))
             {
-                draft.Targets[0] = child;
+                Undo.AddComponent<AchievementColliderEvents>(colliderHolder);
                 draft.ResetPicks();
             }
         }
 
-        private static string[] ComponentLabels(List<HookableComponent> components, bool wantEvents)
+        private static string[] ComponentLabels(GameObject owner, List<HookableComponent> components, bool wantEvents)
         {
             var seen = new Dictionary<string, int>();
             return components.Select(x =>
@@ -705,6 +699,7 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
                 string name = x.Component.GetType().Name;
                 seen[name] = seen.TryGetValue(name, out int count) ? count + 1 : 1;
                 if (seen[name] > 1) name += " #" + seen[name];
+                if (x.Component.gameObject != owner) name += "  (child: " + AchievementRuleWiring.ObjectPath(x.Component.gameObject) + ")";
 
                 string what = wantEvents ? "event" : "condition";
                 return x.Count > 0 ? name + "  (" + x.Count + " " + what + (x.Count > 1 ? "s" : "") + ")" : name + "  (nothing to hook)";
@@ -721,15 +716,17 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
 
             foreach (var target in draft.Targets.ToList())
             {
-                var component = AchievementRuleWiring.HookableComponents(target).FirstOrDefault(c => c.GetType() == componentType);
+                // Looks in the target's own hierarchy too, since the matching component (a nested trigger
+                // collider, say) can live on a child rather than directly on the dropped object.
+                var component = AchievementRuleWiring.HookableComponentsInHierarchy(target).FirstOrDefault(c => c.GetType() == componentType);
                 if (component == null) { problems.Add(target.name + ": no " + componentType.Name); continue; }
 
                 var binding = new DashboardBinding
                 {
                     Role = role,
                     Source = isEvent ? DashboardBindingSource.UnityEvent : DashboardBindingSource.Condition,
-                    ScenePath = target.scene.path,
-                    ObjectPath = AchievementRuleWiring.ObjectPath(target),
+                    ScenePath = component.gameObject.scene.path,
+                    ObjectPath = AchievementRuleWiring.ObjectPath(component.gameObject),
                     ComponentType = componentType.Name,
                     Member = member,
                     Amount = Mathf.Max(1, draft.Amount),

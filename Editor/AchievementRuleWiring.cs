@@ -90,11 +90,21 @@ namespace DryreLHub.SupabaseGameAchievements.Editor
         public static IReadOnlyList<AchievementConditionMember> FindConditions(Component component) =>
             component == null ? new List<AchievementConditionMember>() : AchievementConditionReader.FindMembers(component.GetType());
 
-        /// <summary>The components on an object a rule can hook into (ours are left out).</summary>
+        /// <summary>The components directly on an object a rule can hook into (ours are left out).</summary>
         public static List<Component> HookableComponents(GameObject go) =>
             go == null
                 ? new List<Component>()
                 : go.GetComponents<Component>().Where(c => c != null && !(c is AchievementTrigger) && !(c is AchievementMethodWatcher)).ToList();
+
+        /// <summary>
+        /// Same as <see cref="HookableComponents"/>, but also looks at every child (a trigger collider or a button is
+        /// often nested a level or two down, e.g. under a prefab's visual root). The object's own components come
+        /// first, in hierarchy order, so a direct hit still wins over a deeper one.
+        /// </summary>
+        public static List<Component> HookableComponentsInHierarchy(GameObject go) =>
+            go == null
+                ? new List<Component>()
+                : go.GetComponentsInChildren<Component>(true).Where(c => c != null && !(c is AchievementTrigger) && !(c is AchievementMethodWatcher)).ToList();
 
         // ------------------------------------------------------------------
         // What is in the open scenes
