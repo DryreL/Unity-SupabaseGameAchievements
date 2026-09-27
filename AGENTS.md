@@ -399,6 +399,14 @@ disrupt the user's own Editor session.
 - **The `Edit` tool's exact-string matching can silently fail on a leading UTF-8 BOM** in a `using`
   line at the very top of a file — if a `using X;\nusing Y;` old_string match fails inexplicably, check
   for a BOM character before the first `using`, or match a string that starts one line later.
+- **WebGL is single-threaded — `await AsyncOperationHandle.Task` on Unity Localization/Addressables
+  operations hangs forever there**, which is why achievement toast text never appeared in WebGL
+  builds (it worked fine in the Editor and on other platforms). `UnityLocalizationProvider.GetTextAsync`
+  used to `await titleOp.Task`/`descOp.Task`/`InitializationOperation.Task` directly; fixed by awaiting
+  a `TaskCompletionSource` driven off the operation's `Completed` event instead (see `ToTask` in
+  `Runtime/Localization/UnityLocalizationProvider.cs`), which needs no thread pool and behaves
+  identically on every platform. Any future code that awaits an `AsyncOperationHandle` must use the
+  same `Completed`-event pattern, never `.Task`, or it will silently break on WebGL only.
 - **PowerShell/bash quoting inside a generated one-liner breaks on straight apostrophes** (e.g. "Unity's
   own build system") when embedded in a `node -e '...'` single-quoted script — write the JS to a real
   `.mjs`/`.cjs` scratch file and run that instead of trying to escape apostrophes inline.

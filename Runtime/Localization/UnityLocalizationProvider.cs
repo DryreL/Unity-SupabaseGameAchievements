@@ -77,15 +77,13 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
             int generation = _localeGeneration;
             try
             {
-                await LocalizationSettings.InitializationOperation.Task;
+                await ToTask(LocalizationSettings.InitializationOperation);
 
                 var titleOp = LocalizationSettings.StringDatabase.GetLocalizedStringAsync(definition.LocalizationTable, definition.TitleKey);
                 var descOp = LocalizationSettings.StringDatabase.GetLocalizedStringAsync(definition.LocalizationTable, definition.DescriptionKey);
 
-                await Task.WhenAll(titleOp.Task, descOp.Task);
-
-                string title = titleOp.Result;
-                string description = descOp.Result;
+                string title = await ToTask(titleOp);
+                string description = await ToTask(descOp);
 
                 var text = new AchievementText(
                     IsValid(title) ? title : definition.Title,
@@ -105,6 +103,23 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
         private static bool IsValid(string s)
         {
             return !string.IsNullOrEmpty(s) && !s.StartsWith("No translation found for");
+        }
+
+        // ponytail: AsyncOperationHandle.Task hangs forever on WebGL (single-threaded IL2CPP has no
+        // real thread pool to drive its continuations), so text silently never resolves there.
+        // Drive completion off the Completed event instead - identical behavior on every platform.
+        private static Task<T> ToTask<T>(AsyncOperationHandle<T> handle)
+        {
+            var tcs = new TaskCompletionSource<T>();
+            if (handle.IsDone) SetResult(tcs, handle);
+            else handle.Completed += h => SetResult(tcs, h);
+            return tcs.Task;
+        }
+
+        private static void SetResult<T>(TaskCompletionSource<T> tcs, AsyncOperationHandle<T> handle)
+        {
+            if (handle.Status == AsyncOperationStatus.Succeeded) tcs.TrySetResult(handle.Result);
+            else tcs.TrySetException(handle.OperationException ?? new InvalidOperationException("Localization operation failed"));
         }
 
         private void OnSelectedLocaleChanged(Locale locale)
