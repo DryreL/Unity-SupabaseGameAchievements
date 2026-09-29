@@ -61,6 +61,10 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                 SharedSettingsFolder = _sharedSettingsFolder,
                 VerboseLogging = _verboseLogging,
             });
+
+            if (!string.IsNullOrEmpty(_supabaseUrl))
+                Debug.LogWarning("[Achievements] AchievementBootstrap has no sign-in, so unlocks stay on this device and never sync to Supabase. " +
+                    "Use the Patreon Integration sample's PatreonAchievementsBootstrap, or call UnityAchievementManager.Instance.Initialize(authProvider) after sign-in.", this);
         }
     }
 }
