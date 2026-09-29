@@ -330,6 +330,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
 
             var view = root.AddComponent<AchievementToastView>();
             var font = customFont != null ? customFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+#if !UNITY_WEBGL // WebGL has no OS fonts: replacing the built-in font's name list there leaves it with no glyphs (invisible text)
             if (font != null)
             {
                 font.fontNames = new string[]
@@ -350,6 +351,7 @@ namespace DryreLHub.SupabaseGameAchievements.Unity
                     "Droid Sans Fallback"
                 };
             }
+#endif
 
             view._panel = CreateRect("Panel", root.transform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(1, 0), new Vector2(440, 108));
             var background = view._panel.gameObject.AddComponent<Image>();
