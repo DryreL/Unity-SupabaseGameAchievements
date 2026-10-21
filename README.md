@@ -1,4 +1,8 @@
-﻿# Supabase Game Achievements (com.dryrelhub.supabasegameachievements)
+﻿<p align="center">
+  <img src=".github/icon.png" width="128" height="128" alt="Supabase Game Achievements icon">
+</p>
+
+# Supabase Game Achievements (com.dryrelhub.supabasegameachievements)
 
 Offline-first achievements for games: instant local unlocks, crash-safe saves, batched idempotent
 server sync, an optional unlock overlay, and optional Unity Localization. The design, security
